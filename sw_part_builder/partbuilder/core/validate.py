@@ -144,7 +144,9 @@ def parse_blueprint_vectors(file_path: str, log=None) -> list:
     PDF coordinates are converted from points to mm. DXF coordinates are
     converted from the document's declared insertion units to mm. PDFs with
     embedded raster pages and no usable vector outlines are rendered at 300
-    DPI and passed through the optional OpenCV raster contour parser.
+    DPI and passed through the optional OpenCV raster contour parser. Native
+    PDF entities are first normalized and classified deterministically so
+    annotation-like content can be separated from profile geometry.
     """
     path = Path(file_path)
     extension = path.suffix.lower()
@@ -157,36 +159,36 @@ def parse_blueprint_vectors(file_path: str, log=None) -> list:
 
     try:
         if extension == ".pdf":
-            import pdfplumber
-            from pdfminer.pdfparser import PDFSyntaxError
-
             shapes = []
             raster_pages = []
             pages_requiring_review = []
             try:
-                with pdfplumber.open(path) as pdf:
-                    for page in pdf.pages:
-                        has_native_strokes = bool(page.lines or page.curves)
-                        native_word_count = len(page.extract_words())
-                        raster_image = max(
-                            page.images,
-                            key=lambda image: image["width"] * image["height"],
-                            default=None,
-                        )
-                        has_raster_content = raster_image is not None
-                        if (
-                            has_raster_content
-                            and native_word_count
-                            and not has_native_strokes
-                        ):
-                            pages_requiring_review.append(page.page_number)
-                            continue
-                        scale = 25.4 / 72.0
-                        for rect in page.rects:
-                            x0 = float(rect["x0"]) * scale
-                            x1 = float(rect["x1"]) * scale
-                            y0 = float(rect["top"]) * scale
-                            y1 = float(rect["bottom"]) * scale
+                from ..drawing.pdf_drawing import (
+                    ROLE_GEOMETRY,
+                    ROLE_UNKNOWN,
+                    parse_pdf_drawing,
+                )
+
+                drawing = parse_pdf_drawing(path)
+                scale = 25.4 / 72.0
+                for page in drawing.pages:
+                    has_raster_content = page.raster_image_bbox_pt is not None
+                    if (
+                        has_raster_content
+                        and page.native_word_count
+                        and not page.has_native_strokes
+                    ):
+                        pages_requiring_review.append(page.page_number)
+                        continue
+                    for entity in page.entities:
+                        if entity.kind == "rectangle" and entity.role in {ROLE_GEOMETRY, ROLE_UNKNOWN}:
+                            bbox = entity.bbox_pt
+                            if not bbox:
+                                continue
+                            x0 = float(bbox["x0"]) * scale
+                            x1 = float(bbox["x1"]) * scale
+                            y0 = float(bbox["top"]) * scale
+                            y1 = float(bbox["bottom"]) * scale
                             if x1 > x0 and y1 > y0:
                                 shapes.append({
                                     "type": "rect",
@@ -195,25 +197,22 @@ def parse_blueprint_vectors(file_path: str, log=None) -> list:
                                     "width": x1 - x0,
                                     "height": y1 - y0,
                                 })
-                        segments = [
-                            (
-                                (float(line["x0"]) * scale, float(line["top"]) * scale),
-                                (float(line["x1"]) * scale, float(line["bottom"]) * scale),
-                            )
-                            for line in page.lines
-                        ]
-                        shapes.extend(_closed_path_shapes(segments))
-                        if has_raster_content and (not has_native_strokes or not shapes):
-                            raster_pages.append((
-                                page.page_number - 1,
-                                (
-                                    raster_image["x0"],
-                                    raster_image["top"],
-                                    raster_image["x1"],
-                                    raster_image["bottom"],
-                                ),
-                            ))
-            except (OSError, PDFSyntaxError, KeyError, TypeError, ValueError) as exc:
+                    segments = []
+                    for entity in page.entities:
+                        if entity.kind != "line" or entity.role not in {ROLE_GEOMETRY, ROLE_UNKNOWN}:
+                            continue
+                        endpoints = entity.geometry.get("endpoints_pt", [])
+                        if len(endpoints) != 2:
+                            continue
+                        segments.append((
+                            (float(endpoints[0][0]) * scale, float(endpoints[0][1]) * scale),
+                            (float(endpoints[1][0]) * scale, float(endpoints[1][1]) * scale),
+                        ))
+                    shapes.extend(_closed_path_shapes(segments))
+                    if has_raster_content and (not page.has_native_strokes or not shapes):
+                        if page.raster_image_bbox_pt is not None:
+                            raster_pages.append((page.page_number - 1, page.raster_image_bbox_pt))
+            except (OSError, KeyError, TypeError, ValueError) as exc:
                 logger.warning("Could not read vector PDF %s: %s", path, exc)
                 return []
             if pages_requiring_review:

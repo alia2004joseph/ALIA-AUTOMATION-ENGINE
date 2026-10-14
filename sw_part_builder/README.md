@@ -41,6 +41,19 @@ millimetre scale or claim to reconstruct a part. To also save page renders,
 pass `--render-dir "drawing-rendered" --dpi 300`. The existing UI remains the
 default when `main.py` is run without `--inspect-pdf`.
 
+For deterministic native-PDF diagnostics, add `--classify`:
+
+    python main.py --inspect-pdf "drawing.pdf" --classify --output "drawing-report.json"
+
+This adds a page-level `classified_entities` list with source metadata, role
+labels (`geometry`, `dimension`, `annotation`, `centerline`, `hidden-line`,
+`unknown`), and evidence tags (for example dashed styles or arrow-like
+dimension support). Classification is deterministic and offline only: no OCR,
+AI vision model, cloud service, or 3D reconstruction is used at this stage.
+`parse_blueprint_vectors()` now consumes this normalized classification so
+dimension/title-block-like content is less likely to be imported as sketch
+geometry, while preserving vector-first parsing and raster safety fallbacks.
+
 ### Rule-based DXF build
 
 `parse_universal_dxf(path)` classifies supported closed planar profiles as

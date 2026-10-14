@@ -97,6 +97,7 @@ def inspect_pdf(
     *,
     render_dpi: int = 300,
     render_dir: str | os.PathLike[str] | None = None,
+    include_classified_entities: bool = False,
 ) -> dict[str, Any]:
     """Inspect PDF pages without attempting to infer or create a 3D model.
 
@@ -112,77 +113,12 @@ def inspect_pdf(
         raise ValueError("render_dpi must be a positive integer.")
 
     try:
-        import pdfplumber
-    except ImportError as exc:
-        raise PdfInspectionError(
-            "PDF_READ_ERROR",
-            "pdfplumber is required for PDF inspection; install project requirements.",
-        ) from exc
+        from ..drawing.pdf_drawing import PdfDrawingParseError, parse_pdf_drawing
 
-    pages = []
-    try:
-        with pdfplumber.open(path) as document:
-            if not document.pages:
-                raise PdfInspectionError("PDF_READ_ERROR", "The PDF contains no pages.")
-            for page_index, page in enumerate(document.pages):
-                vectors = _vector_summary(page)
-                images = [
-                    {
-                        "bbox_pt": _bbox(image),
-                        "pixel_width": int(image.get("width", 0)),
-                        "pixel_height": int(image.get("height", 0)),
-                    }
-                    for image in page.images
-                ]
-                text = [
-                    {
-                        "text": word["text"],
-                        "bbox_pt": {
-                            key: float(word[key])
-                            for key in ("x0", "top", "x1", "bottom")
-                        },
-                    }
-                    for word in page.extract_words()
-                ]
-                content_type = _content_type(bool(vectors), bool(images), bool(text))
-                route, reason = _route(content_type, len(vectors), len(images))
-                pages.append({
-                    "page_number": page_index + 1,
-                    "width_pt": float(page.width),
-                    "height_pt": float(page.height),
-                    "rotation_degrees": int(getattr(page, "rotation", 0) or 0),
-                    "content_type": content_type,
-                    "native_text": text,
-                    "vector_entities": vectors,
-                    "embedded_images": images,
-                    "processing_route": route,
-                    "route_reason": reason,
-                })
-    except PdfInspectionError:
-        raise
-    except Exception as exc:
-        raise PdfInspectionError(
-            "PDF_READ_ERROR", f"Could not inspect PDF '{path.name}': {exc}"
-        ) from exc
-
-    report: dict[str, Any] = {
-        "status": "ok",
-        "source_file": path.name,
-        "coordinate_system": {
-            "unit": "PDF points",
-            "origin": "page top-left",
-            "points_per_inch": 72,
-        },
-        "page_count": len(pages),
-        "pages": pages,
-        "summary": {
-            "vector_entity_count": sum(len(page["vector_entities"]) for page in pages),
-            "embedded_image_count": sum(len(page["embedded_images"]) for page in pages),
-            "native_word_count": sum(len(page["native_text"]) for page in pages),
-            "content_types": sorted({page["content_type"] for page in pages}),
-            "processing_routes": sorted({page["processing_route"] for page in pages}),
-        },
-    }
+        drawing = parse_pdf_drawing(path)
+    except PdfDrawingParseError as exc:
+        raise PdfInspectionError(exc.code, str(exc)) from exc
+    report: dict[str, Any] = drawing.to_report(include_entities=include_classified_entities)
 
     if render_dir is not None:
         _render_pages(path, Path(render_dir), render_dpi, report["pages"])
@@ -253,9 +189,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dpi", type=int, default=300, help="Page-render resolution (default: 300)"
     )
+    parser.add_argument(
+        "--classify",
+        action="store_true",
+        help="Include deterministic classified entities with geometry/dimension roles.",
+    )
     args = parser.parse_args(argv)
     try:
-        report = inspect_pdf(args.pdf, render_dpi=args.dpi, render_dir=args.render_dir)
+        report = inspect_pdf(
+            args.pdf,
+            render_dpi=args.dpi,
+            render_dir=args.render_dir,
+            include_classified_entities=args.classify,
+        )
     except (PdfInspectionError, ValueError) as exc:
         print(f"{getattr(exc, 'code', 'INVALID_ARGUMENT')}: {exc}", file=sys.stderr)
         return 2

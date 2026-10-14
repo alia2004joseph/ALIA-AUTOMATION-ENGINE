@@ -188,6 +188,27 @@ def test_vector_parser_returns_empty_for_unsupported_or_missing_file(tmp_path):
     assert parse_blueprint_vectors(str(tmp_path / "missing.pdf")) == []
 
 
+def test_native_vector_pdf_closed_outline_is_imported(tmp_path):
+    pytest.importorskip("pdfplumber")
+    pytest.importorskip("reportlab")
+    from reportlab.pdfgen import canvas
+
+    pdf_path = tmp_path / "vector_outline.pdf"
+    document = canvas.Canvas(str(pdf_path), pagesize=(240, 240))
+    document.line(30, 30, 174, 30)
+    document.line(174, 30, 174, 102)
+    document.line(174, 102, 30, 102)
+    document.line(30, 102, 30, 30)
+    document.save()
+
+    shapes = parse_blueprint_vectors(str(pdf_path))
+
+    assert len(shapes) == 1
+    assert shapes[0]["type"] == "rect"
+    assert shapes[0]["width"] == pytest.approx(50.8, abs=0.2)
+    assert shapes[0]["height"] == pytest.approx(25.4, abs=0.2)
+
+
 def test_dxf_closed_polyline_is_converted_to_mm_rectangle(tmp_path):
     ezdxf = pytest.importorskip("ezdxf")
     from ezdxf import units

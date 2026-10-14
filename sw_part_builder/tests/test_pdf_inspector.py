@@ -56,3 +56,34 @@ def test_content_type_covers_vector_raster_and_mixed_cases():
     assert _content_type(True, True, True) == "mixed"
     assert _content_type(False, False, True) == "text-only"
     assert _content_type(False, False, False) == "empty"
+
+
+def test_inspect_pdf_can_export_deterministic_classified_entities(tmp_path):
+    pytest.importorskip("pdfplumber")
+    pytest.importorskip("reportlab")
+    from reportlab.pdfgen import canvas
+
+    pdf_path = tmp_path / "classified.pdf"
+    document = canvas.Canvas(str(pdf_path), pagesize=(220, 220))
+    document.rect(20, 20, 180, 180, stroke=1, fill=0)  # border-like annotation
+    document.rect(30, 40, 120, 80, stroke=1, fill=0)   # geometry
+    document.line(40, 120, 130, 120)                    # dimension baseline
+    document.line(40, 120, 47, 127)                     # arrow-like
+    document.line(40, 120, 47, 113)                     # arrow-like
+    document.line(130, 120, 123, 127)                   # arrow-like
+    document.line(130, 120, 123, 113)                   # arrow-like
+    document.drawString(70, 128, "R10")
+    document.drawString(35, 24, "TITLE BLOCK")
+    document.setDash(4, 2)
+    document.line(35, 65, 145, 65)
+    document.setDash()
+    document.save()
+
+    report = inspect_pdf(pdf_path, include_classified_entities=True)
+
+    assert "classified_entities" in report["pages"][0]
+    role_counts = report["summary"]["classified_role_counts"]
+    assert role_counts["geometry"] >= 1
+    assert role_counts["annotation"] >= 1
+    assert role_counts["dimension"] >= 1
+    assert role_counts.get("hidden-line", 0) + role_counts.get("centerline", 0) >= 1
