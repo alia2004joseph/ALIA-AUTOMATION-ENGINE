@@ -196,6 +196,86 @@ class App(ctk.CTk):
             return
 
         self.safe_log_to_sw_panel(f"[INGESTION]: Loading blueprint file: {file_path}...")
+        if os.path.splitext(file_path)[1].lower() == ".dxf":
+            from ..core.dxf_dimensions import (
+                analyze_dxf_drawing,
+                format_dxf_analysis,
+            )
+
+            try:
+                dxf_report = analyze_dxf_drawing(file_path)
+            except Exception as exc:
+                self.safe_log_to_sw_panel(f"[INGESTION] ERROR: Could not inspect DXF: {exc}")
+                return
+            if dxf_report["entity_counts"].get("DIMENSION", 0):
+                for line in format_dxf_analysis(dxf_report):
+                    self.safe_log_to_sw_panel(line)
+                from ..core.dxf_modeler import (
+                    PreliminaryModelError,
+                    build_preliminary_dxf_part,
+                )
+
+                try:
+                    preliminary = build_preliminary_dxf_part(file_path)
+                except PreliminaryModelError as exc:
+                    self.safe_log_to_sw_panel(
+                        f"[DXF] Preliminary model unavailable: {exc}"
+                    )
+                    return
+                except Exception as exc:
+                    self.safe_log_to_sw_panel(
+                        f"[DXF] ERROR: Preliminary model generation failed: {exc}"
+                    )
+                    return
+
+                confirmed = messagebox.askyesno(
+                    "Preliminary DXF model",
+                    f"Create a preliminary model from {preliminary.source_region}?\n\n"
+                    f"Profile: {preliminary.profile_width_mm:.1f} × "
+                    f"{preliminary.profile_height_mm:.1f} mm\n"
+                    f"Extrusion: {preliminary.thickness_mm:.1f} mm\n\n"
+                    f"Detected holes: {preliminary.hole_count}"
+                    + (
+                        f" at about Ø{preliminary.hole_diameter_mm:.2f} mm"
+                        if preliminary.hole_diameter_mm is not None
+                        else ""
+                    )
+                    + "\n\nThis replaces the current feature tree. The view, "
+                    "thickness, and hole sizes/locations are inferred; countersinks "
+                    "are not modeled. Review before manufacturing.",
+                    parent=self,
+                )
+                if not confirmed:
+                    self.safe_log_to_sw_panel(
+                        "[DXF] Preliminary model creation cancelled; current part unchanged."
+                    )
+                    return
+
+                self.part = preliminary.part
+                self.selected = 0
+                self._raster_blueprint_source = None
+                self.safe_log_to_sw_panel(
+                    f"[DXF] Created PRELIMINARY model from {preliminary.source_region}; "
+                    f"scale={preliminary.drawing_scale:.4g}×, profile="
+                    f"{preliminary.profile_width_mm:.1f} × "
+                    f"{preliminary.profile_height_mm:.1f} mm, "
+                    f"extrusion={preliminary.thickness_mm:.1f} mm."
+                )
+                self.safe_log_to_sw_panel(
+                    f"[DXF] Review required: {preliminary.review_note}"
+                )
+                self.safe_log_to_sw_panel(
+                    "[DXF] Edit the generated sketch/extrude in the feature tree, "
+                    "then use COMPILE TO SOLIDWORKS to build it."
+                )
+                self.refresh_all()
+                return
+            if dxf_report["document_units"] is None:
+                self.safe_log_to_sw_panel(
+                    "[DXF] WARNING: document units are unresolved; no physical "
+                    "scale will be assumed."
+                )
+
         from ..core.validate import parse_blueprint_vectors
 
         self._raster_blueprint_source = None

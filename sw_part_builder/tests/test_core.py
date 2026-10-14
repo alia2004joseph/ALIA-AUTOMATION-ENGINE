@@ -253,6 +253,160 @@ def test_universal_dxf_requires_declared_units_and_closed_boss(tmp_path):
     assert parse_universal_dxf(str(path))["status"] == "error"
 
 
+def test_dxf_dimension_inspector_applies_dimension_scale_and_units(tmp_path):
+    ezdxf = pytest.importorskip("ezdxf")
+    from ezdxf import units
+    from partbuilder.core.dxf_dimensions import (
+        format_dimension_evidence,
+        inspect_dxf_dimensions,
+    )
+
+    drawing = ezdxf.new()
+    drawing.units = units.IN
+    drawing.dimstyles.new("SCALED", dxfattribs={"dimlfac": 2.0})
+    drawing.modelspace().add_linear_dim(
+        base=(5, 15),
+        p1=(0, 0),
+        p2=(10, 0),
+        dimstyle="SCALED",
+    ).render()
+    path = tmp_path / "scaled_inches.dxf"
+    drawing.saveas(path)
+
+    report = inspect_dxf_dimensions(path)
+
+    assert report["status"] == "ok"
+    assert report["dimension_count"] == 1
+    dimension = report["dimensions"][0]
+    assert dimension["type"] == "linear"
+    assert dimension["raw_measurement"] == pytest.approx(10)
+    assert dimension["dimlfac"] == pytest.approx(2)
+    assert dimension["value"] == pytest.approx(508)
+    assert dimension["unit"] == "mm"
+    assert "508 mm" in format_dimension_evidence(report)[0]
+
+
+def test_dxf_dimension_inspector_reports_missing_units_without_guessing(tmp_path):
+    ezdxf = pytest.importorskip("ezdxf")
+    from partbuilder.core.dxf_dimensions import inspect_dxf_dimensions
+
+    drawing = ezdxf.new()
+    drawing.units = 0
+    path = tmp_path / "unitless.dxf"
+    drawing.saveas(path)
+
+    report = inspect_dxf_dimensions(path)
+
+    assert report["status"] == "unresolved_units"
+    assert report["dimensions"] == []
+    assert "cannot be confirmed" in report["note"]
+
+
+def test_dxf_analysis_clusters_disconnected_profiles_and_keeps_dimensions_unconfirmed(tmp_path):
+    ezdxf = pytest.importorskip("ezdxf")
+    from ezdxf import units
+    from partbuilder.core.dxf_dimensions import analyze_dxf_drawing, format_dxf_analysis
+
+    drawing = ezdxf.new()
+    drawing.units = units.MM
+    modelspace = drawing.modelspace()
+    modelspace.add_line((0, 0), (40, 0))
+    modelspace.add_line((40, 0), (40, 20))
+    modelspace.add_line((40, 20), (0, 20))
+    modelspace.add_line((0, 20), (0, 0))
+    modelspace.add_line((100, 0), (100, 20))
+    modelspace.add_line((100, 20), (130, 20))
+    modelspace.add_line((130, 20), (130, 0))
+    modelspace.add_line((130, 0), (100, 0))
+    modelspace.add_linear_dim(base=(20, 35), p1=(0, 0), p2=(40, 0)).render()
+    path = tmp_path / "orthographic_regions.dxf"
+    drawing.saveas(path)
+
+    report = analyze_dxf_drawing(path)
+
+    assert report["entity_counts"]["DIMENSION"] == 1
+    assert len(report["candidate_regions"]) == 2
+    assert report["interpretation"]["projection_convention"] == "unresolved"
+    assert report["dimensions"][0]["nearest_region_candidate"]["association_confirmed"] is False
+    assert any(
+        "does not itself create a 3D model" in line
+        for line in format_dxf_analysis(report)
+    )
+
+
+def test_preliminary_dxf_modeler_builds_dimension_scaled_extrusion(tmp_path):
+    ezdxf = pytest.importorskip("ezdxf")
+    from ezdxf import units
+    from partbuilder.core.dxf_modeler import build_preliminary_dxf_part
+    from partbuilder.core.model import Extrude, Polygon, Sketch
+
+    drawing = ezdxf.new()
+    drawing.units = units.MM
+    drawing.dimstyles.new("SCALED", dxfattribs={"dimlfac": 2.0})
+    modelspace = drawing.modelspace()
+
+    def add_loop(points):
+        for index, start in enumerate(points):
+            modelspace.add_line(start, points[(index + 1) % len(points)])
+
+    add_loop([(0, 0), (40, 0), (40, 2), (2, 2), (2, 30), (0, 30)])
+    add_loop([(60, 0), (100, 0), (100, 5), (60, 5)])
+    add_loop([(110, 0), (115, 0), (115, 30), (110, 30)])
+    for center in ((70, 2.5), (90, 2.5)):
+        modelspace.add_circle(center, radius=1.12)
+    for center in ((112.5, 8), (112.5, 22)):
+        modelspace.add_circle(center, radius=1.12)
+        modelspace.add_circle(center, radius=2.35)
+    for first, second, angle in (
+        ((0, 35), (40, 35), 0),
+        ((45, 0), (45, 30), 90),
+        ((60, 10), (65, 10), 0),
+    ):
+        modelspace.add_linear_dim(
+            base=(first[0], first[1] + 3),
+            p1=first,
+            p2=second,
+            angle=angle,
+            dimstyle="SCALED",
+        )
+    modelspace.add_diameter_dim(
+        center=(20, 20),
+        radius=2.35,
+        angle=0,
+        text="4X <> THRU ALL",
+        dimstyle="SCALED",
+    )
+    path = tmp_path / "dimensioned_bracket.dxf"
+    drawing.saveas(path)
+
+    result = build_preliminary_dxf_part(path)
+
+    assert result.source_region == "region-01"
+    assert result.drawing_scale == pytest.approx(2)
+    assert result.profile_width_mm == pytest.approx(80)
+    assert result.profile_height_mm == pytest.approx(60)
+    assert result.thickness_mm == pytest.approx(10)
+    assert isinstance(result.part.features[0], Sketch)
+    assert isinstance(result.part.features[0].entities[0], Polygon)
+    assert isinstance(result.part.features[1], Extrude)
+    assert result.part.features[1].depth == pytest.approx(10)
+    assert result.hole_count == 4
+    assert result.hole_diameter_mm == pytest.approx(4.48)
+    assert result.countersink_diameter_mm == pytest.approx(9.4)
+    hole_sketches = [
+        feature for feature in result.part.features
+        if isinstance(feature, Sketch) and feature.name.startswith("Detected")
+    ]
+    assert [feature.plane for feature in hole_sketches] == ["Top", "Right"]
+    assert [len(feature.entities) for feature in hole_sketches] == [2, 2]
+    assert [feature.entities[0].cy for feature in hole_sketches] == pytest.approx([-5, 16])
+    assert [feature.entities[0].cx for feature in hole_sketches] == pytest.approx([140, -5])
+    assert isinstance(result.part.features[-1], Extrude)
+    assert result.part.features[-1].operation == "cut"
+    assert result.part.features[-1].end == "through_all"
+    assert "countersink" in result.review_note.lower()
+
+
 def test_raster_parser_returns_local_closed_profile_and_circle():
     cv2 = pytest.importorskip("cv2")
     import numpy as np

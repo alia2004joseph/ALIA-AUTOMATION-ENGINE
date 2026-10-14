@@ -53,6 +53,21 @@ Dimensions, text, and unsupported entities are ignored/reported. This is geometr
 classification, not a claim that arbitrary drawing sheets encode a complete
 manufacturing model.
 
+When the UI detects native DXF `DIMENSION` entities, it reports their stored
+values using the document insertion units and each dimension style's `DIMLFAC`.
+It also reports entity counts and spatially clustered candidate geometry
+regions, excluding low-support groups and clusters that span nearly the whole
+drawing sheet. For dimensioned DXFs with a mostly orthogonal closed profile,
+the UI can create a **preliminary** extruded model when at least two native
+linear dimensions support a consistent drawing scale and another projection
+supports the extrusion thickness. When matching plan and end views contain
+repeated circular geometry, the modeler also adds through-hole cuts and reports
+the inferred bore size. Countersinks are detected as evidence but are not yet
+modeled. The import dialog warns that this replaces the current feature tree.
+Review the inferred profile, depth, and hole positions before using the model;
+the selected geometry is not guaranteed to be the correct front/top/side view.
+Unsupported or ambiguous drawings still stop without creating a solid.
+
 Pass the parser's `profile-0001`-style IDs through a sidecar Part recipe's
 sketches using `dxf_geometry_id`; keep extrusion parameters and modifiers
 explicit in that recipe:
