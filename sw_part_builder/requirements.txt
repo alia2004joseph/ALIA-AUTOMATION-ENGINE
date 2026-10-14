@@ -1,0 +1,11 @@
+customtkinter
+pywin32; sys_platform == "win32"
+cadquery
+vtk
+pillow
+numpy
+opencv-python-headless
+pytest
+pdfplumber
+pypdfium2
+ezdxf

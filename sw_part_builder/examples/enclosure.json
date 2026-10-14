@@ -1,0 +1,22 @@
+{
+  "name": "Enclosure",
+  "units": "mm",
+  "features": [
+    {"type": "sketch", "name": "BoxProfile", "plane": "Front", "offset": 0,
+     "entities": [{"kind": "rect", "cx": 0, "cy": 0, "width": 100, "height": 80}]},
+    {"type": "extrude", "name": "Box", "sketch": "BoxProfile", "operation": "boss",
+     "end": "blind", "depth": 50, "direction": "one"},
+    {"type": "sketch", "name": "PocketProfile", "plane": "Front", "offset": 50,
+     "entities": [{"kind": "rect", "cx": 0, "cy": 0, "width": 95, "height": 75}]},
+    {"type": "extrude", "name": "Pocket", "sketch": "PocketProfile", "operation": "cut",
+     "end": "blind", "depth": 47.5, "direction": "reverse"},
+    {"type": "sketch", "name": "MountingHoles", "plane": "Front", "offset": 0,
+     "entities": [
+       {"kind": "circle", "cx": 40, "cy": 30, "diameter": 5},
+       {"kind": "circle", "cx": -40, "cy": 30, "diameter": 5},
+       {"kind": "circle", "cx": 40, "cy": -30, "diameter": 5},
+       {"kind": "circle", "cx": -40, "cy": -30, "diameter": 5}]},
+    {"type": "extrude", "name": "HoleCut", "sketch": "MountingHoles", "operation": "cut",
+     "end": "through_all", "depth": 10, "direction": "symmetric"}
+  ]
+}

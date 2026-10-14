@@ -1,0 +1,19 @@
+{
+  "name": "PracticeProblem_1_1",
+  "units": "mm",
+  "features": [
+    {"type": "sketch", "name": "StepProfile", "plane": "Front", "offset": 0,
+     "entities": [{"kind": "polygon", "points": [
+        [0,0],[60,0],[60,30],[48,30],[48,38],[32,38],[32,50],[20,50],[20,75],[0,75]]}]},
+    {"type": "extrude", "name": "StepBody", "sketch": "StepProfile", "operation": "boss",
+     "end": "blind", "depth": 20, "direction": "one"},
+    {"type": "sketch", "name": "FrontPlateProfile", "plane": "Front", "offset": 20,
+     "entities": [{"kind": "rect", "cx": 30, "cy": 15, "width": 60, "height": 30}]},
+    {"type": "extrude", "name": "FrontPlate", "sketch": "FrontPlateProfile", "operation": "boss",
+     "end": "blind", "depth": 8, "direction": "one"},
+    {"type": "sketch", "name": "HoleProfile", "plane": "Front", "offset": 0,
+     "entities": [{"kind": "circle", "cx": 44, "cy": 16, "diameter": 12}]},
+    {"type": "extrude", "name": "Hole", "sketch": "HoleProfile", "operation": "cut",
+     "end": "through_all", "depth": 10, "direction": "symmetric"}
+  ]
+}

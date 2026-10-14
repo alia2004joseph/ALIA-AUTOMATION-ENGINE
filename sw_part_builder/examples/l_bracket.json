@@ -1,0 +1,18 @@
+{
+  "name": "L-Bracket",
+  "units": "mm",
+  "features": [
+    {"type": "sketch", "name": "LProfile", "plane": "Right", "offset": 0,
+     "entities": [{"kind": "polygon", "points": [[0,0],[60,0],[60,5],[5,5],[5,50],[0,50]]}]},
+    {"type": "extrude", "name": "Bracket", "sketch": "LProfile", "operation": "boss",
+     "end": "blind", "depth": 40, "direction": "symmetric"},
+    {"type": "sketch", "name": "BaseHoles", "plane": "Top", "offset": 0,
+     "entities": [
+       {"kind": "circle", "cx": -10, "cy": 30, "diameter": 6},
+       {"kind": "circle", "cx": 10, "cy": 30, "diameter": 6},
+       {"kind": "circle", "cx": -10, "cy": 50, "diameter": 6},
+       {"kind": "circle", "cx": 10, "cy": 50, "diameter": 6}]},
+    {"type": "extrude", "name": "BaseHoleCut", "sketch": "BaseHoles", "operation": "cut",
+     "end": "through_all", "depth": 10, "direction": "symmetric"}
+  ]
+}
