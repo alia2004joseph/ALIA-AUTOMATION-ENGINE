@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
+
+from .pdf_raster_extract import extract_page_drawing_raster
 
 
 class PdfInspectionError(ValueError):
@@ -97,6 +100,9 @@ def inspect_pdf(
     *,
     render_dpi: int = 300,
     render_dir: str | os.PathLike[str] | None = None,
+    classify: bool = False,
+    analyze_raster: bool = False,
+    analysis_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Inspect PDF pages without attempting to infer or create a 3D model.
 
@@ -146,7 +152,7 @@ def inspect_pdf(
                 ]
                 content_type = _content_type(bool(vectors), bool(images), bool(text))
                 route, reason = _route(content_type, len(vectors), len(images))
-                pages.append({
+                page_report = {
                     "page_number": page_index + 1,
                     "width_pt": float(page.width),
                     "height_pt": float(page.height),
@@ -157,7 +163,18 @@ def inspect_pdf(
                     "embedded_images": images,
                     "processing_route": route,
                     "route_reason": reason,
-                })
+                }
+                if classify:
+                    page_report["classified_entities"] = _classify_page_entities(page_report)
+                if analyze_raster and images:
+                    page_report["raster_analysis"] = _analyze_page_raster(
+                        pdf_path=path,
+                        page=page,
+                        page_number=page_index + 1,
+                        dpi=render_dpi,
+                        output_dir=analysis_dir,
+                    )
+                pages.append(page_report)
     except PdfInspectionError:
         raise
     except Exception as exc:
@@ -183,6 +200,8 @@ def inspect_pdf(
             "processing_routes": sorted({page["processing_route"] for page in pages}),
         },
     }
+    if classify:
+        report["summary"]["classified_role_counts"] = _summarize_roles(pages)
 
     if render_dir is not None:
         _render_pages(path, Path(render_dir), render_dpi, report["pages"])
@@ -193,6 +212,104 @@ def inspect_pdf(
     else:
         report["rendering"] = {"status": "not_requested"}
     return report
+
+
+def _summarize_roles(pages: list[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for page in pages:
+        for entity in page.get("classified_entities", []):
+            role = entity.get("role")
+            if isinstance(role, str):
+                counts[role] += 1
+    return dict(sorted(counts.items()))
+
+
+def _classify_page_entities(page: dict[str, Any]) -> list[dict[str, Any]]:
+    entities = []
+    for vector in page.get("vector_entities", []):
+        kind = vector.get("type")
+        if kind in {"line", "curve"}:
+            role = "geometry"
+            evidence = ["vector-stroke"]
+        elif kind == "rectangle":
+            bbox = vector.get("bbox_pt") or {}
+            width = float(vector.get("width_pt") or 0.0)
+            height = float(vector.get("height_pt") or 0.0)
+            near_page_border = (
+                bbox.get("x0", 1e9) <= 3.0
+                and bbox.get("top", 1e9) <= 3.0
+                and abs(float(page.get("width_pt", 0.0)) - float(bbox.get("x1", 0.0))) <= 3.0
+                and abs(float(page.get("height_pt", 0.0)) - float(bbox.get("bottom", 0.0))) <= 3.0
+            )
+            if near_page_border and width > 0 and height > 0:
+                role = "annotation"
+                evidence = ["border-like-rectangle"]
+            else:
+                role = "geometry"
+                evidence = ["closed-vector-rectangle"]
+        else:
+            role = "unknown"
+            evidence = ["unsupported-vector-entity"]
+        entities.append({
+            "kind": kind,
+            "role": role,
+            "geometry": vector,
+            "evidence": evidence,
+        })
+
+    for text in page.get("native_text", []):
+        token = str(text.get("text") or "")
+        if any(marker in token.upper() for marker in ("Ø", "⌀", "R", "M", "°")) or any(ch.isdigit() for ch in token):
+            role = "dimension"
+            evidence = ["dimension-text-token"]
+        else:
+            role = "annotation"
+            evidence = ["native-text-token"]
+        entities.append({
+            "kind": "text",
+            "role": role,
+            "geometry": text,
+            "evidence": evidence,
+        })
+
+    for image in page.get("embedded_images", []):
+        entities.append({
+            "kind": "image",
+            "role": "annotation",
+            "geometry": image,
+            "evidence": ["embedded-raster-content"],
+        })
+    return entities
+
+
+def _analyze_page_raster(
+    *,
+    pdf_path: Path,
+    page: Any,
+    page_number: int,
+    dpi: int,
+    output_dir: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    try:
+        from .raster_drawing_analyzer import analyze_raster_drawing
+    except ImportError as exc:
+        return {
+            "status": "unavailable",
+            "note": f"Raster analysis unavailable: {exc}",
+        }
+
+    image, extraction = extract_page_drawing_raster(pdf_path, page, page_number - 1, dpi=dpi)
+    if image is None:
+        return {
+            "status": "error",
+            "note": "No raster content was extractable for deterministic analysis.",
+            "extraction": extraction,
+        }
+
+    overlay_path = None
+    if output_dir is not None:
+        overlay_path = Path(output_dir) / f"page-{page_number:03d}-raster-overlay.png"
+    return analyze_raster_drawing(image, output_png=overlay_path, extraction=extraction)
 
 
 def _render_pages(
@@ -247,6 +364,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("pdf", help="PDF file to inspect")
     parser.add_argument("--output", help="Write JSON report to this file (default: stdout)")
     parser.add_argument(
+        "--classify",
+        action="store_true",
+        help="Classify detected native entities into deterministic role candidates.",
+    )
+    parser.add_argument(
+        "--analyze-raster",
+        action="store_true",
+        help="Run deterministic raster analysis for embedded drawing images.",
+    )
+    parser.add_argument(
         "--render-dir",
         help="Optionally save rendered page PNGs to this directory",
     )
@@ -254,8 +381,23 @@ def main(argv: list[str] | None = None) -> int:
         "--dpi", type=int, default=300, help="Page-render resolution (default: 300)"
     )
     args = parser.parse_args(argv)
+    analysis_dir = None
+    if args.analyze_raster:
+        if args.render_dir:
+            analysis_dir = args.render_dir
+        elif args.output:
+            analysis_dir = str(Path(args.output).resolve().parent)
+        else:
+            analysis_dir = str(Path.cwd())
     try:
-        report = inspect_pdf(args.pdf, render_dpi=args.dpi, render_dir=args.render_dir)
+        report = inspect_pdf(
+            args.pdf,
+            render_dpi=args.dpi,
+            render_dir=args.render_dir,
+            classify=args.classify,
+            analyze_raster=args.analyze_raster,
+            analysis_dir=analysis_dir,
+        )
     except (PdfInspectionError, ValueError) as exc:
         print(f"{getattr(exc, 'code', 'INVALID_ARGUMENT')}: {exc}", file=sys.stderr)
         return 2
