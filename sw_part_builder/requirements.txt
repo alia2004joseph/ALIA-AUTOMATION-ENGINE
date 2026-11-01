@@ -9,3 +9,4 @@ pytest
 pdfplumber
 pypdfium2
 ezdxf
+pytesseract

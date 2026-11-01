@@ -1,13 +1,18 @@
 """Main window: wires the feature tree, editors, 3D preview and the two backends together."""
+import copy
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import traceback
-from tkinter import filedialog, messagebox
+from pathlib import Path
+from tkinter import TclError, filedialog, messagebox
 
 import customtkinter as ctk
 
-from ..backends import preview_cq, solidworks
 from ..core.model import Circle, Extrude, Part, Polygon, Rect, Sketch
 from ..core.validate import has_errors, validate
 from .editors import EditorPanel
@@ -34,6 +39,8 @@ class App(ctk.CTk):
         self.busy = False
         self._rebuild_job = None
         self._raster_blueprint_source = None
+        self._preview_generation = 0
+        self._preview_lock = threading.Lock()
 
         self._build_layout()
         self.refresh_all()
@@ -58,6 +65,21 @@ class App(ctk.CTk):
                                           font=ctk.CTkFont(weight="bold"), command=self.on_compile_click)
         self.btn_compile = self.btn_sw_build
         self.btn_sw_build.pack(side="right", padx=4, pady=8)
+        self.btn_pdf_analysis = ctk.CTkButton(
+            bar,
+            text="Analyze Drawing...",
+            width=140,
+            fg_color="#3A3A3A",
+            command=self.on_analyze_pdf_click,
+        )
+        self.btn_pdf_analysis.pack(side="right", padx=4, pady=8)
+        ctk.CTkButton(
+            bar,
+            text="Restart GUI",
+            width=100,
+            fg_color="#3A3A3A",
+            command=self.restart_gui,
+        ).pack(side="right", padx=4, pady=8)
         for text, cmd in (("Export STL (preview)...", self.export_preview), ("Save...", self.save_file),
                           ("Open...", self.open_file), ("New", self.new_part)):
             ctk.CTkButton(bar, text=text, width=130 if "STL" in text else 70, fg_color="#3A3A3A",
@@ -73,7 +95,8 @@ class App(ctk.CTk):
 
         self.editor = EditorPanel(
             self, lambda: self.part, self.on_edit, self.on_rename,
-            on_import=self.on_import_vector_click, width=320,
+            on_import=self.on_import_vector_click,
+            width=320,
         )
         self.editor.grid(row=1, column=2, sticky="nsew", padx=(5, 10), pady=10)
 
@@ -122,17 +145,63 @@ class App(ctk.CTk):
         lines = [str(i) for i in self.issues]
 
         if has_errors(self.issues):
+            self._preview_generation += 1
             self.result = None
             self.viewport.show(None, "Fix the errors (red items) to see the preview")
-        else:
+            self._set_text(self.issue_box, "\n".join(lines))
+            return
+
+        self._preview_generation += 1
+        generation = self._preview_generation
+        part_snapshot = Part.from_dict(self.part.to_dict())
+        self.result = None
+        self.viewport.show(None, "Preparing 3D preview...")
+        self._set_text(self.issue_box, "\n".join(lines) or "Building 3D preview...")
+
+        def worker():
             try:
-                self.result = preview_cq.build_preview(self.part)
-                lines += [f"warn  {w}" for w in self.result.warnings]
-                self.viewport.show(self.result, "Nothing to show yet")
-            except preview_cq.BuildError as exc:
-                self.result = None
-                lines.append(f"ERROR preview: {exc}")
-                self.viewport.show(None, "Preview failed - see Checks")
+                with self._preview_lock:
+                    if generation != self._preview_generation:
+                        return
+                    from ..backends import preview_cq
+                    from .viewport import load_vtk_backend
+
+                    result = preview_cq.build_preview(part_snapshot)
+                    load_vtk_backend()
+                    error = None
+            except Exception as exc:
+                result = None
+                error = exc
+            try:
+                self.after(
+                    0,
+                    lambda: self._preview_finished(
+                        generation, result, error, lines
+                    ),
+                )
+            except (RuntimeError, TclError):
+                return
+
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except RuntimeError as exc:
+            self.result = None
+            lines.append(f"ERROR preview worker: {exc}")
+            self.viewport.show(None, "Preview could not be started - see Checks")
+            self._set_text(self.issue_box, "\n".join(lines))
+
+    def _preview_finished(self, generation, result, error, validation_lines):
+        if generation != self._preview_generation:
+            return
+        lines = list(validation_lines)
+        if error is not None:
+            self.result = None
+            lines.append(f"ERROR preview: {error}")
+            self.viewport.show(None, "Preview failed - see Checks")
+        else:
+            self.result = result
+            lines += [f"warn  {warning}" for warning in result.warnings]
+            self.viewport.show(result, "Nothing to show yet")
         self._set_text(self.issue_box, "\n".join(lines) if lines else "All checks passed.")
 
     # ================================================================ tree actions
@@ -184,6 +253,717 @@ class App(ctk.CTk):
         return True
 
     # ================================================================ files
+    def restart_gui(self):
+        if not messagebox.askyesno(
+            "Restart Part Builder",
+            "Restart the application to load code changes?\n\n"
+            "Any unsaved part changes will be lost.",
+            parent=self,
+        ):
+            return
+
+        script_path = os.path.abspath(sys.argv[0])
+        command = [sys.executable, script_path, *sys.argv[1:]]
+        try:
+            subprocess.Popen(command, cwd=os.getcwd())
+        except OSError as exc:
+            messagebox.showerror(
+                "Restart failed",
+                f"Could not restart the Part Builder:\n{exc}",
+                parent=self,
+            )
+            return
+        self.destroy()
+
+    def on_analyze_pdf_click(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[
+                ("Engineering drawings", "*.pdf *.dxf *.png *.jpg *.jpeg *.tif *.tiff *.bmp"),
+                ("PDF drawings", "*.pdf"),
+                ("DXF drawings", "*.dxf"),
+                ("Raster images", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp"),
+            ],
+        )
+        if not file_path:
+            return
+
+        pdf_path = Path(file_path)
+        output_dir = pdf_path.with_name(f"{pdf_path.stem}-drawing-analysis")
+        report_path = output_dir / "report.json"
+        interpretation_path = output_dir / "drawing-interpretation.json"
+        self.btn_pdf_analysis.configure(state="disabled")
+        self.safe_log_to_sw_panel(
+            f"[DRAWING ANALYSIS] Processing {pdf_path.name}; results will be saved to {output_dir}."
+        )
+
+        def worker():
+            try:
+                from ..core.drawing_interpreter import interpret_drawing
+                from ..core.drawing_sources import inspect_drawing_source
+
+                output_dir.mkdir(parents=True, exist_ok=True)
+                report = inspect_drawing_source(
+                    pdf_path,
+                    dpi=300,
+                    output_dir=output_dir,
+                    run_ocr=True,
+                )
+                interpretation = interpret_drawing(report)
+                report_path.write_text(
+                    json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                interpretation_path.write_text(
+                    json.dumps(interpretation, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                self.after(
+                    0,
+                    lambda error=exc: self._pdf_analysis_finished(
+                        pdf_path, output_dir, None, None, error
+                    ),
+                )
+            else:
+                self.after(
+                    0,
+                    lambda: self._pdf_analysis_finished(
+                        pdf_path, output_dir, report, interpretation, None
+                    ),
+                )
+
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except RuntimeError as exc:
+            self.btn_pdf_analysis.configure(state="normal")
+            messagebox.showerror("PDF analysis", f"Could not start analysis:\n{exc}")
+
+    def _pdf_analysis_finished(self, pdf_path, output_dir, report, interpretation, error):
+        self.btn_pdf_analysis.configure(state="normal")
+        if error is not None:
+            self.safe_log_to_sw_panel(f"[DRAWING ANALYSIS] Failed: {error}")
+            messagebox.showerror("Drawing analysis failed", str(error))
+            return
+
+        self.safe_log_to_sw_panel(
+            f"[DRAWING ANALYSIS] Complete: {report['page_count']} page(s), "
+            f"{interpretation['summary']['dimension_candidate_count']} dimension candidate(s), "
+            f"{interpretation['summary']['symbol_annotation_count']} symbol annotation(s). "
+            f"Offline OCR: {report.get('offline_ocr', {}).get('status', 'not reported')}. "
+            f"Reports and PNG files saved to {output_dir}."
+        )
+        self._show_pdf_analysis(pdf_path, output_dir, report, interpretation)
+
+    def _show_pdf_analysis(self, pdf_path, output_dir, report, interpretation):
+        window = ctk.CTkToplevel(self)
+        window.title(f"Drawing analysis: {pdf_path.name}")
+        window.geometry("1120x820")
+        window.minsize(720, 560)
+        window.grid_columnconfigure(0, weight=1)
+        window.grid_rowconfigure(2, weight=1)
+
+        ctk.CTkLabel(
+            window,
+            text=f"Drawing analysis: {pdf_path.name}",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
+
+        page_values = [f"Page {page['page_number']}" for page in report["pages"]]
+        selected_page = ctk.StringVar(value=page_values[0])
+        has_drawing_layout = any(
+            page.get("raster_analysis", {}).get("drawing_views_png")
+            and Path(page["raster_analysis"]["drawing_views_png"]).is_file()
+            for page in report["pages"]
+        )
+        has_any_overlay = any(
+            (
+                page.get("raster_analysis", {}).get("full_page_overlay_png")
+                or page.get("raster_analysis", {}).get("overlay_png")
+            )
+            and Path(
+                page.get("raster_analysis", {}).get("full_page_overlay_png")
+                or page["raster_analysis"]["overlay_png"]
+            ).is_file()
+            for page in report["pages"]
+        )
+        selected_image = ctk.StringVar(
+            value=(
+                "Drawing views (source layout)" if has_drawing_layout
+                else "Analysis overlay" if has_any_overlay
+                else "Full page"
+            )
+        )
+        current_image_path: list[Path | None] = [None]
+
+        controls = ctk.CTkFrame(window, fg_color="transparent")
+        controls.grid(row=1, column=0, sticky="ew", padx=12, pady=4)
+        controls.grid_columnconfigure(1, weight=1)
+        image_mode = ctk.CTkSegmentedButton(
+            controls,
+            values=[
+                "Drawing views (source layout)",
+                "Analysis overlay",
+                "Full page",
+            ],
+            variable=selected_image,
+            command=lambda _value: show_page(),
+        )
+        image_mode.grid(row=0, column=0, sticky="w")
+        if len(page_values) > 1:
+            ctk.CTkOptionMenu(
+                controls,
+                values=page_values,
+                variable=selected_page,
+                command=lambda _value: show_page(),
+            ).grid(row=0, column=1, sticky="e", padx=8)
+        else:
+            ctk.CTkLabel(controls, text=page_values[0], text_color="#9A9A9A").grid(
+                row=0, column=1, sticky="e", padx=8
+            )
+
+        def open_current_png():
+            image_path = current_image_path[0]
+            if image_path is None or not image_path.is_file():
+                messagebox.showerror(
+                    "PNG preview",
+                    "The selected PNG file is no longer available.",
+                    parent=window,
+                )
+                return
+            try:
+                os.startfile(str(image_path))
+            except OSError as exc:
+                messagebox.showerror(
+                    "Could not open PNG",
+                    f"Could not open {image_path}:\n{exc}",
+                    parent=window,
+                )
+
+        open_png_button = ctk.CTkButton(
+            controls,
+            text="Open PNG",
+            width=100,
+            command=open_current_png,
+        )
+        open_png_button.grid(row=0, column=2, sticky="e")
+        review_button = ctk.CTkButton(
+            controls,
+            text="Review view inventory",
+            width=160,
+            command=lambda: self._show_view_inventory_review(
+                window,
+                int(selected_page.get().split()[-1]),
+                interpretation,
+                output_dir / "drawing-interpretation.json",
+                self._view_review_image_path(
+                    report["pages"][int(selected_page.get().split()[-1]) - 1],
+                    output_dir,
+                ),
+            ),
+        )
+        review_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
+
+        image_frame = ctk.CTkFrame(window)
+        image_frame.grid(row=2, column=0, sticky="nsew", padx=12, pady=8)
+        image_frame.grid_columnconfigure(0, weight=1)
+        image_frame.grid_rowconfigure(0, weight=1)
+        image_label = ctk.CTkLabel(image_frame, text="Loading PNG preview...")
+        image_label.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        output_label = ctk.CTkLabel(
+            window,
+            text="",
+            text_color="#9A9A9A",
+            wraplength=1080,
+        )
+        output_label.grid(row=3, column=0, sticky="w", padx=12, pady=(0, 12))
+
+        def show_page():
+            page_number = int(selected_page.get().split()[-1])
+            page = report["pages"][page_number - 1]
+            raster = page.get("raster_analysis", {})
+            overlay = raster.get("full_page_overlay_png") or raster.get("overlay_png")
+            drawing_layout = raster.get("drawing_views_png")
+            rendered = page.get("render", {}).get("file")
+            has_drawing_layout = bool(
+                drawing_layout and Path(drawing_layout).is_file()
+            )
+            has_overlay = bool(overlay and Path(overlay).is_file())
+            has_rendered = bool(rendered and (output_dir / rendered).is_file())
+            has_preview = (
+                has_drawing_layout
+                or has_overlay
+                or has_rendered
+            )
+            image_mode.configure(state="normal")
+            if (
+                not has_drawing_layout
+                and selected_image.get() == "Drawing views (source layout)"
+            ):
+                selected_image.set(
+                    "Analysis overlay" if has_overlay
+                    else "Full page"
+                )
+            elif not has_overlay and selected_image.get() == "Analysis overlay":
+                selected_image.set("Full page")
+            if (
+                selected_image.get() == "Drawing views (source layout)"
+                and has_drawing_layout
+            ):
+                image_path = Path(drawing_layout)
+            elif selected_image.get() == "Analysis overlay" and has_overlay:
+                image_path = Path(overlay)
+            else:
+                image_path = output_dir / rendered if rendered else None
+            current_image_path[0] = image_path
+            image_mode.configure(state="normal" if has_preview else "disabled")
+            open_png_button.configure(
+                state="normal" if image_path is not None and image_path.is_file() else "disabled"
+            )
+            if image_path is not None and image_path.is_file():
+                from PIL import Image
+
+                with Image.open(image_path) as source:
+                    preview = source.copy()
+                preview.thumbnail((1060, 690))
+                window.preview_image = ctk.CTkImage(
+                    light_image=preview,
+                    dark_image=preview,
+                    size=preview.size,
+                )
+                image_label.configure(image=window.preview_image, text="")
+            else:
+                window.preview_image = None
+                image_label.configure(
+                    image=None,
+                    text=(
+                        "No PNG preview is available for this vector drawing. "
+                        "See report.json and drawing-interpretation.json."
+                        if not has_preview
+                        else "No PNG image was generated for this page."
+                    ),
+                )
+
+            output_label.configure(
+                text=f"PNG: {image_path}" if image_path is not None else f"Output folder: {output_dir}"
+            )
+
+        show_page()
+
+    @staticmethod
+    def _view_review_image_path(page, output_dir):
+        raster = page.get("raster_analysis", {})
+        candidates = [
+            raster.get("full_page_overlay_png"),
+            raster.get("overlay_png"),
+            raster.get("drawing_views_png"),
+        ]
+        rendered = page.get("render", {}).get("file")
+        if rendered:
+            candidates.append(output_dir / rendered)
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                return Path(candidate)
+        return None
+
+    def _show_view_inventory_review(
+        self,
+        parent,
+        page_number,
+        interpretation,
+        interpretation_path,
+        reference_image_path=None,
+    ):
+        page = next(
+            (
+                item for item in interpretation.get("pages", [])
+                if item.get("page_number") == page_number
+            ),
+            None,
+        )
+        if page is None:
+            messagebox.showerror(
+                "View inventory",
+                f"No interpretation data is available for page {page_number}.",
+                parent=parent,
+            )
+            return
+
+        review_window = ctk.CTkToplevel(parent)
+        review_window.title(f"Review view inventory - page {page_number}")
+        review_window.geometry("1180x760")
+        review_window.minsize(850, 560)
+        review_window.grid_columnconfigure(0, weight=1)
+        review_window.grid_columnconfigure(1, weight=2)
+        review_window.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(
+            review_window,
+            text=(
+                "Compare each candidate with the drawing before choosing. "
+                "The automatic suggestions are uncertain: the largest view is "
+                "not necessarily the front view. Choose Unknown whenever unsure."
+            ),
+            wraplength=1120,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=10)
+
+        image_frame = ctk.CTkFrame(review_window)
+        image_frame.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=6)
+        image_frame.grid_columnconfigure(0, weight=1)
+        image_frame.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(
+            image_frame,
+            text="Drawing reference - match the view IDs",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        reference_label = ctk.CTkLabel(
+            image_frame,
+            text="Drawing image unavailable",
+            wraplength=390,
+        )
+        reference_label.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
+        if reference_image_path is not None and Path(reference_image_path).is_file():
+            try:
+                from PIL import Image
+
+                with Image.open(reference_image_path) as source:
+                    preview = source.copy()
+                preview.thumbnail((460, 640))
+                review_window.reference_image = ctk.CTkImage(
+                    light_image=preview,
+                    dark_image=preview,
+                    size=preview.size,
+                )
+                reference_label.configure(
+                    image=review_window.reference_image,
+                    text="",
+                )
+            except OSError as exc:
+                reference_label.configure(text=f"Could not load drawing image:\n{exc}")
+
+        scroll = ctk.CTkScrollableFrame(review_window)
+        scroll.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=6)
+        scroll.grid_columnconfigure(0, weight=1)
+        view_type_options = {
+            "Not reviewed": None,
+            "Orthographic": "orthographic",
+            "Isometric": "isometric_reference",
+            "Section": "section",
+            "Detail": "detail",
+            "Auxiliary": "auxiliary",
+            "Unknown": "unknown",
+        }
+        role_options = {
+            "Not reviewed": None,
+            "Front (principal)": "front",
+            "Top": "top",
+            "Bottom": "bottom",
+            "Left side": "left_side",
+            "Right side": "right_side",
+            "Rear": "rear",
+            "Parent (source view)": "parent",
+            "Derived (section/detail/etc.)": "derived",
+            "Unknown (not sure)": "unknown",
+            "Not applicable": "not_applicable",
+        }
+        relationship_options = {
+            "Not reviewed": None,
+            "Confirm": "accepted",
+            "Reject": "rejected",
+        }
+        view_list = page.get("views", [])
+        view_rows = []
+        type_reverse = {value: label for label, value in view_type_options.items() if value}
+        role_reverse = {value: label for label, value in role_options.items() if value}
+        candidate_role_labels = {
+            "front_view_candidate": "Front (principal)",
+            "top_view_candidate": "Top",
+            "bottom_view_candidate": "Bottom",
+            "left_side_view_candidate": "Left side",
+            "right_side_view_candidate": "Right side",
+            "rear_view_candidate": "Rear",
+        }
+        view_labels = {
+            view.get("view_id"): f"View {index} ({view.get('view_id', 'unknown')})"
+            for index, view in enumerate(view_list, start=1)
+        }
+
+        def relative_location(view):
+            bbox = view.get("bbox_pt") or view.get("bbox_px")
+            if not isinstance(bbox, dict):
+                return "location unknown"
+            x = float(bbox.get("x0", bbox.get("x", 0)))
+            y = float(bbox.get("top", bbox.get("y", 0)))
+            width = float(bbox.get("x1", x + float(bbox.get("width", 0)))) - x
+            height = float(bbox.get("bottom", y + float(bbox.get("height", 0)))) - y
+            centers = []
+            for candidate in view_list:
+                candidate_box = candidate.get("bbox_pt") or candidate.get("bbox_px") or {}
+                candidate_x = float(candidate_box.get("x0", candidate_box.get("x", 0)))
+                candidate_y = float(candidate_box.get("top", candidate_box.get("y", 0)))
+                candidate_width = float(
+                    candidate_box.get(
+                        "x1", candidate_x + float(candidate_box.get("width", 0))
+                    )
+                ) - candidate_x
+                candidate_height = float(
+                    candidate_box.get(
+                        "bottom", candidate_y + float(candidate_box.get("height", 0))
+                    )
+                ) - candidate_y
+                centers.append((
+                    candidate_x + candidate_width / 2,
+                    candidate_y + candidate_height / 2,
+                ))
+            center_x, center_y = x + width / 2, y + height / 2
+
+            def relative_axis(value, values, low_label, high_label):
+                low, high = min(values), max(values)
+                if high - low <= 1:
+                    return "middle"
+                position = (value - low) / (high - low)
+                if position < 1 / 3:
+                    return low_label
+                if position > 2 / 3:
+                    return high_label
+                return "middle"
+
+            horizontal = relative_axis(
+                center_x, [center[0] for center in centers], "left", "right"
+            )
+            vertical = relative_axis(
+                center_y, [center[1] for center in centers], "upper", "lower"
+            )
+            if len(view_list) == 1:
+                return "only detected region"
+            return f"{vertical}-{horizontal} among detected regions"
+
+        ctk.CTkLabel(
+            scroll,
+            text="1. Classify each view",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+        for index, view in enumerate(view_list, start=1):
+            row = ctk.CTkFrame(scroll)
+            row.grid(row=index, column=0, sticky="ew", padx=4, pady=4)
+            row.grid_columnconfigure(0, weight=1)
+            suggested_role = view.get("role_candidate", {}).get("value")
+            if suggested_role == "layout_reference_candidate":
+                role_description = (
+                    "Layout anchor only (largest detected view; not automatically front)"
+                )
+            elif suggested_role and suggested_role != "unknown_view_candidate":
+                friendly_role = candidate_role_labels.get(
+                    suggested_role,
+                    role_reverse.get(suggested_role, suggested_role),
+                )
+                role_description = (
+                    f"Possible {friendly_role} "
+                    "(unconfirmed)"
+                )
+            else:
+                role_description = "No reliable role suggested"
+            detected_type = view.get("view_type", "unknown")
+            if detected_type == "isometric_reference":
+                detected_type = "isometric"
+            ctk.CTkLabel(
+                row,
+                text=(
+                    f"{view_labels.get(view.get('view_id'), 'View')}\n"
+                    f"Location: {relative_location(view)}\n"
+                    f"Automatic type guess: {detected_type}\n"
+                    f"Automatic role guess: {role_description}"
+                ),
+                anchor="w",
+                justify="left",
+                wraplength=600,
+            ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 2))
+            ctk.CTkLabel(row, text="Your view type").grid(
+                row=1, column=0, sticky="w", padx=8, pady=(2, 6)
+            )
+            ctk.CTkLabel(row, text="Your role (orientation or relation)").grid(
+                row=1, column=1, sticky="w", padx=8, pady=(2, 6)
+            )
+            prior_review = view.get("review", {})
+            type_value = ctk.StringVar(
+                value=type_reverse.get(prior_review.get("view_type"), "Not reviewed")
+            )
+            role_value = ctk.StringVar(
+                value=role_reverse.get(prior_review.get("role"), "Not reviewed")
+            )
+            ctk.CTkOptionMenu(
+                row,
+                values=list(view_type_options),
+                variable=type_value,
+                width=190,
+            ).grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
+            ctk.CTkOptionMenu(
+                row,
+                values=list(role_options),
+                variable=role_value,
+                width=190,
+            ).grid(row=2, column=1, sticky="w", padx=8, pady=(0, 8))
+            view_rows.append((view.get("view_id"), type_value, role_value))
+
+        relation_start = len(view_rows) + 1
+        ctk.CTkLabel(
+            scroll,
+            text="2. Check suggested view links",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).grid(row=relation_start, column=0, sticky="w", padx=8, pady=(14, 4))
+        relationship_rows = []
+        for index, relation in enumerate(
+            page.get("view_relationships", []),
+            start=relation_start + 1,
+        ):
+            row = ctk.CTkFrame(scroll)
+            row.grid(row=index, column=0, sticky="ew", padx=4, pady=4)
+            row.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                row,
+                text=(
+                    f"{view_labels.get(relation.get('source_view_id'), 'View')} and "
+                    f"{view_labels.get(relation.get('target_view_id'), 'View')}: "
+                    f"the second is {relation.get('relative_position', 'nearby')} the first"
+                    + (
+                        f" and their boxes align {relation.get('alignment_axis')}"
+                        if relation.get("alignment_axis")
+                        else "; alignment was not established"
+                    )
+                    + ". Box alignment does not prove these views show the same part."
+                ),
+                anchor="w",
+                wraplength=600,
+                justify="left",
+            ).grid(row=0, column=0, sticky="ew", padx=8, pady=6)
+            prior_review = relation.get("review", {}).get("status")
+            relationship_value = ctk.StringVar(
+                value=(
+                    "Confirm" if prior_review == "accepted"
+                    else "Reject" if prior_review == "rejected"
+                    else "Not reviewed"
+                )
+            )
+            ctk.CTkOptionMenu(
+                row,
+                values=list(relationship_options),
+                variable=relationship_value,
+                width=160,
+            ).grid(row=0, column=1, sticky="e", padx=8, pady=6)
+            relationship_rows.append((relation.get("relationship_id"), relationship_value))
+
+        def save_review():
+            role_selections = {}
+            for view_id, _type_value, role_value in view_rows:
+                role = role_options[role_value.get()]
+                if role in {"front", "top", "bottom", "left_side", "right_side", "rear"}:
+                    role_selections.setdefault(role, []).append(view_id)
+            duplicates = {
+                role: view_ids
+                for role, view_ids in role_selections.items()
+                if len(view_ids) > 1
+            }
+            if duplicates:
+                repeated = "; ".join(
+                    f"{role_reverse[role]}: "
+                    + ", ".join(view_labels.get(view_id, "View") for view_id in view_ids)
+                    for role, view_ids in duplicates.items()
+                )
+                if not messagebox.askyesno(
+                    "Repeated view roles",
+                    "More than one view has the same orientation:\n\n"
+                    f"{repeated}\n\n"
+                    "This can be valid for separate parts, but may be a mistake. "
+                    "Save these choices anyway?",
+                    parent=review_window,
+                ):
+                    return
+
+            updated = copy.deepcopy(interpretation)
+            updated_page = next(
+                item for item in updated["pages"]
+                if item.get("page_number") == page_number
+            )
+            views_by_id = {
+                view.get("view_id"): view
+                for view in updated_page.get("views", [])
+            }
+            for view_id, type_value, role_value in view_rows:
+                reviewed_type = view_type_options[type_value.get()]
+                reviewed_role = role_options[role_value.get()]
+                if reviewed_type is None and reviewed_role is None:
+                    continue
+                view = views_by_id.get(view_id)
+                if view is not None:
+                    reviewed = reviewed_type is not None and reviewed_role is not None
+                    view["review"] = {
+                        "source": "human_review",
+                        "status": "reviewed" if reviewed else "partially_reviewed",
+                        "view_type": reviewed_type,
+                        "view_type_status": (
+                            "reviewed" if reviewed_type is not None else "not_reviewed"
+                        ),
+                        "role": reviewed_role,
+                        "role_status": (
+                            "reviewed" if reviewed_role is not None else "not_reviewed"
+                        ),
+                    }
+
+            relationships_by_id = {
+                relation.get("relationship_id"): relation
+                for relation in updated_page.get("view_relationships", [])
+            }
+            for relation_id, relationship_value in relationship_rows:
+                status = relationship_options[relationship_value.get()]
+                if status is None:
+                    continue
+                relation = relationships_by_id.get(relation_id)
+                if relation is not None:
+                    relation["review"] = {
+                        "source": "human_review",
+                        "status": status,
+                    }
+
+            temporary_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    newline="\n",
+                    dir=interpretation_path.parent,
+                    prefix=f".{interpretation_path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temporary_file:
+                    temporary_path = Path(temporary_file.name)
+                    json.dump(updated, temporary_file, indent=2, ensure_ascii=False)
+                    temporary_file.write("\n")
+                os.replace(temporary_path, interpretation_path)
+            except OSError as exc:
+                if temporary_path is not None:
+                    try:
+                        temporary_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                messagebox.showerror(
+                    "Could not save view review",
+                    f"Could not update {interpretation_path}:\n{exc}",
+                    parent=review_window,
+                )
+                return
+
+            interpretation.clear()
+            interpretation.update(updated)
+            self.safe_log_to_sw_panel(
+                f"[DRAWING ANALYSIS] View review saved to {interpretation_path}."
+            )
+            review_window.destroy()
+
+        ctk.CTkButton(
+            review_window,
+            text="Save review",
+            command=save_review,
+        ).grid(row=2, column=0, columnspan=2, sticky="e", padx=12, pady=10)
+
     def on_import_vector_click(self):
         file_path = filedialog.askopenfilename(
             filetypes=[
@@ -406,6 +1186,8 @@ class App(ctk.CTk):
         if not path:
             return
         try:
+            from ..backends import preview_cq
+
             preview_cq.export(self.part, path)
             self.log(f"Exported preview solid to {path}")
         except Exception as exc:
@@ -438,6 +1220,8 @@ class App(ctk.CTk):
 
         def worker():
             try:
+                from ..backends import solidworks
+
                 with solidworks.com_thread():
                     fn()
             except Exception as exc:
@@ -457,6 +1241,8 @@ class App(ctk.CTk):
         """Snapshot the current model and start the SolidWorks COM worker."""
         if self.busy:
             return
+        from ..backends import solidworks
+
         if not solidworks.AVAILABLE:
             messagebox.showerror(
                 "SolidWorks",
@@ -522,6 +1308,7 @@ class App(ctk.CTk):
                     "using the validated feature tree."
                 )
 
+            from ..backends import solidworks
             with solidworks.com_thread():
                 builder = solidworks.SolidWorksBuilder(log=self.safe_log_to_sw_panel)
                 self.safe_log_to_sw_panel(
@@ -557,6 +1344,8 @@ class App(ctk.CTk):
     def export_from_sw(self):
         if self.busy:
             return
+        from ..backends import solidworks
+
         if not solidworks.AVAILABLE:
             messagebox.showerror("SolidWorks", "pywin32 not found. This only runs on Windows:\npip install pywin32")
             return

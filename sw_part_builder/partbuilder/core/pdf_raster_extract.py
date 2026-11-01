@@ -26,7 +26,13 @@ def select_likely_drawing_image(
         area_score = (width_pt * height_pt) / page_area
         src_w, src_h = image.get("srcsize") or (0, 0)
         src_score = min(float(src_w) * float(src_h), 25_000_000.0) / 25_000_000.0
-        return area_score * 0.8 + src_score * 0.2 - index * 1e-6
+        aspect_score = 1.0
+        if width_pt > 0 and height_pt > 0 and src_w > 0 and src_h > 0:
+            placed_aspect = width_pt / height_pt
+            source_aspect = float(src_w) / float(src_h)
+            aspect_ratio = placed_aspect / source_aspect
+            aspect_score = min(aspect_ratio, 1.0 / aspect_ratio)
+        return (area_score * 0.8 + src_score * 0.2) * aspect_score - index * 1e-6
 
     return max(enumerate(images), key=score, default=None)
 
