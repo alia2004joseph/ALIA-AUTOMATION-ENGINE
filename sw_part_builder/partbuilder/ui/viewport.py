@@ -9,24 +9,44 @@ Model coordinates are used directly: X right, Y up, Z toward the viewer, which i
 the same orientation as SolidWorks' Front view.
 """
 import math
+import threading
 import tkinter as tk
 
 import customtkinter as ctk
 import numpy as np
 from PIL import Image, ImageTk
 
-try:
-    import vtk
-    from vtk.util import numpy_support as ns
-    AVAILABLE = True
-except ImportError:  # pragma: no cover
-    AVAILABLE = False
+vtk = None
+ns = None
+AVAILABLE = None
+_VTK_IMPORT_ERROR = None
+_VTK_IMPORT_LOCK = threading.Lock()
 
 BG_HEX = "#1E1E1E"
 BG = (0.118, 0.118, 0.118)
 BODY = (0.36, 0.55, 0.72)
 EDGE = (0.0, 0.83, 1.0)
 DEFAULT_VIEW = (40.0, 28.0, 1.0)   # azimuth deg, elevation deg, zoom
+
+
+def load_vtk_backend():
+    global vtk, ns, AVAILABLE, _VTK_IMPORT_ERROR
+    if AVAILABLE is not None:
+        return AVAILABLE
+    with _VTK_IMPORT_LOCK:
+        if AVAILABLE is not None:
+            return AVAILABLE
+        try:
+            import vtk as vtk_module
+            from vtk.util import numpy_support
+        except (ImportError, OSError) as exc:  # pragma: no cover
+            _VTK_IMPORT_ERROR = exc
+            AVAILABLE = False
+        else:
+            vtk = vtk_module
+            ns = numpy_support
+            AVAILABLE = True
+    return AVAILABLE
 
 
 def _id_array(values):
@@ -86,13 +106,14 @@ class Viewport(ctk.CTkFrame):
 
     # ------------------------------------------------------------ public
     def show(self, result=None, message: str = ""):
-        if not AVAILABLE:
-            self._show_text("VTK is not installed (pip install vtk)")
-            return
         if result is None or result.vertices is None or len(result.triangles) == 0:
             self._ren = None
             self._camera_ready = False
             self._show_text(message or "No geometry")
+            return
+        if not load_vtk_backend():
+            detail = f": {_VTK_IMPORT_ERROR}" if _VTK_IMPORT_ERROR else ""
+            self._show_text(f"VTK is not available{detail}")
             return
         self._build_scene(result)
         self._schedule()

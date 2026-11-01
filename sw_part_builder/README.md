@@ -12,6 +12,10 @@ see supported geometry in 3D, then build the list natively in SolidWorks.
 Open `examples\enclosure.json` or `examples\l_bracket.json` to try it.
 Tests (no SolidWorks needed): `python -m pytest`
 
+After code changes, use **Restart GUI** in the top toolbar to launch the updated
+application without manually closing the current window first. Confirm the
+restart when prompted; unsaved part edits in the current session will be lost.
+
 The editor can import closed vector paths from PDF and DXF drawings. Install
 `pdfplumber`, `ezdxf`, `pypdfium2`, and `opencv-python-headless` from
 `requirements.txt`. PDF vector coordinates are converted from points to mm;
@@ -27,7 +31,85 @@ contours can combine dimensions, annotations, and separate projected views
 into a false part. Use a single-view profile or review/enter the geometry
 manually instead.
 
-### PDF diagnostic report
+### Drawing analysis and interpretation report
+
+In the Part Builder, choose **Analyze Drawing...** for a PDF, DXF, PNG, JPG,
+TIFF, or BMP. Analysis runs in the background, saves reports in a
+`<drawing-name>-drawing-analysis` folder beside the input, and previews raster
+pages without changing the current part or sketch. PDF uses the existing
+native-text/vector inspection and embedded-image pipeline; standalone images
+use the raster analyzer; DXF preserves native entities, layers, declared units,
+and the existing rule-based profile-parser result. DXF currently has no PNG
+preview in this workflow.
+
+The preview defaults to **Drawing views (source layout)** when view candidates
+are detected. Its `page-001-drawing-view-layout.png` preserves the full
+extracted source image without cropping, stacking, or rearranging views. This
+keeps orthographic and isometric views, their drawing-sheet positions, and
+surrounding detail/dimension callouts visible even when the heuristic
+classifier is uncertain.
+
+Select **Analysis overlay** to inspect detected regions; its PNG preserves the
+full frame of the extracted raster image. The overlay is drawn on a
+complete-page render so page margins and content outside an embedded image
+remain visible. Use **Open PNG** to launch the selected saved image in the
+default image viewer. Interpretation details remain in the JSON reports.
+
+The GUI writes `report.json` and `drawing-interpretation.json`. The shared
+`inspect_drawing_source(...)` entry point normalizes PDF, DXF, and raster-image
+inspection into a common report envelope while preserving source coordinates.
+The interpretation report includes explicit units/scale evidence, view and
+dimension candidates, source locations, recognition methods, ambiguity,
+limitations, and review status (drawing-interpretation schema 1.1).
+Layout-based role guesses remain candidates:
+the largest orthographic region is exposed only as a layout reference, not
+assumed to be the principal/front view. The report separates each candidate's
+view type from its role, and records tentative layout relationships when
+candidate bounding boxes align within 15% of the smaller region's width or
+height and are separated by at least half the larger region's corresponding
+dimension. These are explicit, uncalibrated geometric heuristics—not proof
+that edges correspond. A top/side role suggested by first- or
+third-angle text is conditional on the reference being the principal view;
+position alone does not establish projected correspondence. Freely positioned
+reference-arrow layouts, graphical projection symbols, and matching edges
+across views are not yet recognized. Dimension text alone does not establish
+which feature it measures. Nearly tied spatial associations are marked
+ambiguous.
+Use **Review view inventory** in the analysis window to record a human-reviewed
+view type, role, or accepted/rejected relationship. These decisions are saved
+under separate `review` fields in `drawing-interpretation.json`; automatic
+candidate evidence is retained unchanged.
+The review window keeps a drawing reference beside the candidate list, describes
+each candidate by its relative page location, and separates the view-type choice
+from its orientation/relationship role. Suggestions are explicitly tentative;
+the reference overlay labels detected regions with the same view IDs shown in
+the list. Choose Unknown when the drawing does not make a view clear. Repeated
+front/top/side orientations trigger a confirmation before saving because they
+may indicate either separate parts or an accidental duplicate assignment.
+Numeric heuristic scores are retained for ranking only; `confidence` is null
+unless a calibrated recognizer supplies it. Bare-number matches are explicitly
+marked as weak text candidates.
+
+Offline OCR uses the local Tesseract 5 installation with English data on the
+current development machine. The GUI requests local OCR during drawing
+analysis; PDF CLI callers can opt in with `--analyze-raster --ocr`.
+`pytesseract` alone is not the OCR engine: installations without the separate
+Tesseract executable or English language data receive an explicit unavailable
+status and no cloud fallback is attempted. Set `ALIA_TESSERACT_CMD` to the
+engine executable when it is not on PATH or in a standard Windows install
+location. OCR text is review-only and is kept separate from native PDF text.
+The symbol catalog and Engineering Intermediate Representation are data
+foundations, not recognizers or a 3D reconstruction system. Graphical
+GD&T/weld/thread symbols,
+scale recovery, and interpretation-to-Part-JSON generation remain incomplete.
+All candidates require engineering review; no ISO or ASME drawing convention
+is assumed implicitly.
+
+Research references: [ASME Y14.3 orthographic and pictorial views](https://www.asme.org/codes-standards/find-codes-standards/y14-3-orthographic-pictorial-views)
+defines drawing view requirements; [Tesseract installation](https://tesseract-ocr.github.io/tessdoc/Installation.html)
+and [command-line usage](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html)
+document a possible offline OCR engine. Neither reference implies that ALIA
+currently performs complete projection-symbol recognition or OCR.
 
 Inspect a PDF before importing it into the sketch editor:
 
@@ -40,6 +122,34 @@ reported in points from the page's top-left; this report does not infer
 millimetre scale or claim to reconstruct a part. To also save page renders,
 pass `--render-dir "drawing-rendered" --dpi 300`. The existing UI remains the
 default when `main.py` is run without `--inspect-pdf`.
+
+To analyze a PDF yourself on Windows and open its first generated overlay, run
+this from PowerShell in the `sw_part_builder` folder:
+
+    .\analyze-drawing.ps1
+
+Choose a PDF in the file picker, or pass its path directly:
+
+    .\analyze-drawing.ps1 "C:\path\to\drawing.pdf"
+
+The script saves `report.json` and page overlay PNGs in a
+`<drawing-name>-raster-analysis` folder beside the PDF, then opens the first
+overlay in your default image viewer. Candidate line and circle detections are
+available in the JSON report but are not drawn on the overlay, keeping it
+readable. Embedded-image selection also checks whether an image's source aspect
+ratio matches its placement on the PDF page, avoiding stretched logos that can
+otherwise be mistaken for the drawing. Optional local reference-fixture tests
+compare generated overlays pixel-for-pixel with provided PDFs and baselines.
+Those source documents are not distributed with the repository; to run these
+tests, add authorized fixtures under `tests/fixtures/` and set
+`ALIA_RUN_DRAWING_REFERENCE_TESTS=1`.
+
+High-resolution scanned pages are downscaled for analysis and receive local
+lighting correction to reduce paper shadows. The report records the source
+image dimensions, analysis scale, and scan preprocessing status. Scan view and
+feature detections are heuristic candidates and require manual review; this
+does not deskew pages, recover dimensions, or reconstruct a model. A scanned
+PDF regression fixtures can be supplied locally to cover this path.
 
 ### Rule-based DXF build
 
@@ -103,6 +213,10 @@ use the mouse wheel to zoom, and double-click to reset the view.
     main.py
     partbuilder/
       core/model.py          feature dataclasses, Part, JSON save/load
+      core/drawing_sources.py common PDF / DXF / raster inspection entry point
+      core/drawing_interpreter.py reviewable drawing candidates and evidence
+      core/engineering_ir.py drawing-independent, uncertainty-aware IR
+      core/engineering_knowledge.py symbol-definition catalog, separate from recognition
       core/validate.py       part-independent geometry/rule checks
       backends/preview_cq.py CadQuery solid + mesh + per-feature volumes
       backends/solidworks.py COM translator (step-labelled errors, volume check)

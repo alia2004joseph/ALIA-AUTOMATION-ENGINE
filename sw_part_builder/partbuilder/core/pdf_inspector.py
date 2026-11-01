@@ -102,7 +102,9 @@ def inspect_pdf(
     render_dir: str | os.PathLike[str] | None = None,
     classify: bool = False,
     analyze_raster: bool = False,
+    run_ocr: bool = False,
     analysis_dir: str | os.PathLike[str] | None = None,
+    preserve_overlay_frame: bool = False,
 ) -> dict[str, Any]:
     """Inspect PDF pages without attempting to infer or create a 3D model.
 
@@ -116,6 +118,8 @@ def inspect_pdf(
         raise PdfInspectionError("PDF_READ_ERROR", "Input must be a PDF file.")
     if not isinstance(render_dpi, int) or isinstance(render_dpi, bool) or render_dpi <= 0:
         raise ValueError("render_dpi must be a positive integer.")
+    if run_ocr and not analyze_raster:
+        raise ValueError("run_ocr requires analyze_raster=True.")
 
     try:
         import pdfplumber
@@ -173,6 +177,8 @@ def inspect_pdf(
                         page_number=page_index + 1,
                         dpi=render_dpi,
                         output_dir=analysis_dir,
+                        preserve_full_frame=preserve_overlay_frame,
+                        run_ocr=run_ocr,
                     )
                 pages.append(page_report)
     except PdfInspectionError:
@@ -185,6 +191,17 @@ def inspect_pdf(
     report: dict[str, Any] = {
         "status": "ok",
         "source_file": path.name,
+        "input_type": "pdf",
+        "source_document": {
+            "file_name": path.name,
+            "path": str(path),
+            "format": "pdf",
+            "input_type": "pdf",
+            "coordinate_system": {
+                "unit": "PDF points",
+                "origin": "page top-left",
+            },
+        },
         "coordinate_system": {
             "unit": "PDF points",
             "origin": "page top-left",
@@ -196,15 +213,52 @@ def inspect_pdf(
             "vector_entity_count": sum(len(page["vector_entities"]) for page in pages),
             "embedded_image_count": sum(len(page["embedded_images"]) for page in pages),
             "native_word_count": sum(len(page["native_text"]) for page in pages),
+            "ocr_word_count": sum(
+                len(page.get("raster_analysis", {}).get("ocr_text", []))
+                for page in pages
+            ),
             "content_types": sorted({page["content_type"] for page in pages}),
             "processing_routes": sorted({page["processing_route"] for page in pages}),
         },
     }
+    ocr_pages = [
+        page.get("raster_analysis", {}).get("offline_ocr")
+        for page in pages
+        if page.get("raster_analysis", {}).get("offline_ocr")
+    ]
+    report["offline_ocr"] = (
+        {
+            "status": "not_requested",
+            "engine": "Tesseract",
+        }
+        if not run_ocr
+        else {
+            "status": (
+                "completed"
+                if any(item.get("status") == "completed" for item in ocr_pages)
+                else "no_raster_content"
+                if not ocr_pages
+                else ocr_pages[0].get("status")
+            ),
+            "engine": "Tesseract",
+            "pages": ocr_pages,
+        }
+    )
     if classify:
         report["summary"]["classified_role_counts"] = _summarize_roles(pages)
 
     if render_dir is not None:
         _render_pages(path, Path(render_dir), render_dpi, report["pages"])
+        if preserve_overlay_frame and analyze_raster:
+            for page_report in report["pages"]:
+                raster = page_report.get("raster_analysis")
+                if raster and raster.get("status") == "ok":
+                    full_page_overlay = _write_full_page_raster_overlay(
+                        page_report,
+                        Path(render_dir),
+                    )
+                    if full_page_overlay is not None:
+                        raster["full_page_overlay_png"] = str(full_page_overlay)
         report["rendering"] = {
             "dpi": render_dpi,
             "directory": str(Path(render_dir)),
@@ -212,6 +266,92 @@ def inspect_pdf(
     else:
         report["rendering"] = {"status": "not_requested"}
     return report
+
+
+def _write_full_page_raster_overlay(
+    page_report: dict[str, Any],
+    render_dir: Path,
+) -> Path | None:
+    """Draw raster view boxes on the full rendered PDF page, not just its image."""
+    from PIL import Image, ImageDraw
+
+    rendered = page_report.get("render", {}).get("file")
+    if not rendered:
+        return None
+    page_image_path = render_dir / rendered
+    if not page_image_path.is_file():
+        return None
+
+    raster = page_report["raster_analysis"]
+    source_size = raster.get("source_size_px") or {}
+    source_width = float(source_size.get("width", 0))
+    source_height = float(source_size.get("height", 0))
+    if source_width <= 0 or source_height <= 0:
+        return None
+
+    extraction = raster.get("extraction", {})
+    image_bbox = extraction.get("selected_bbox_pt") or {
+        "x0": 0.0,
+        "top": 0.0,
+        "x1": float(page_report["width_pt"]),
+        "bottom": float(page_report["height_pt"]),
+    }
+    image_width_pt = float(image_bbox["x1"]) - float(image_bbox["x0"])
+    image_height_pt = float(image_bbox["bottom"]) - float(image_bbox["top"])
+    if image_width_pt <= 0 or image_height_pt <= 0:
+        return None
+
+    scale = float(raster.get("analysis_scale", 1.0))
+    if scale <= 0:
+        return None
+    offset = raster.get("crop_offset_px") or {}
+    with Image.open(page_image_path) as source:
+        canvas = source.convert("RGB")
+    draw = ImageDraw.Draw(canvas)
+    colors = {
+        "orthographic": (0, 180, 0),
+        "isometric_reference": (0, 120, 220),
+    }
+    for region in raster.get("view_regions", []):
+        box = region.get("bbox_px") or {}
+        left_px = (float(box.get("x", 0)) + float(offset.get("left", 0))) / scale
+        top_px = (float(box.get("y", 0)) + float(offset.get("top", 0))) / scale
+        right_px = left_px + float(box.get("width", 0)) / scale
+        bottom_px = top_px + float(box.get("height", 0)) / scale
+        page_box = (
+            round(
+                (float(image_bbox["x0"]) + left_px / source_width * image_width_pt)
+                / float(page_report["width_pt"])
+                * canvas.width
+            ),
+            round(
+                (float(image_bbox["top"]) + top_px / source_height * image_height_pt)
+                / float(page_report["height_pt"])
+                * canvas.height
+            ),
+            round(
+                (float(image_bbox["x0"]) + right_px / source_width * image_width_pt)
+                / float(page_report["width_pt"])
+                * canvas.width
+            ),
+            round(
+                (float(image_bbox["top"]) + bottom_px / source_height * image_height_pt)
+                / float(page_report["height_pt"])
+                * canvas.height
+            ),
+        )
+        draw.rectangle(
+            page_box,
+            outline=colors.get(region.get("classification"), (180, 120, 0)),
+            width=max(2, round(canvas.width / 700)),
+        )
+
+    overlay_path = render_dir / (
+        f"page-{int(page_report['page_number']):03d}-full-page-overlay.png"
+    )
+    canvas.save(overlay_path, format="PNG")
+    canvas.close()
+    return overlay_path
 
 
 def _summarize_roles(pages: list[dict[str, Any]]) -> dict[str, int]:
@@ -289,6 +429,8 @@ def _analyze_page_raster(
     page_number: int,
     dpi: int,
     output_dir: str | os.PathLike[str] | None = None,
+    preserve_full_frame: bool = False,
+    run_ocr: bool = False,
 ) -> dict[str, Any]:
     try:
         from .raster_drawing_analyzer import analyze_raster_drawing
@@ -307,9 +449,29 @@ def _analyze_page_raster(
         }
 
     overlay_path = None
+    orthographic_views_path = None
+    drawing_layout_path = None
     if output_dir is not None:
         overlay_path = Path(output_dir) / f"page-{page_number:03d}-raster-overlay.png"
-    return analyze_raster_drawing(image, output_png=overlay_path, extraction=extraction)
+        orthographic_views_path = (
+            Path(output_dir) / f"page-{page_number:03d}-orthographic-views.png"
+        )
+        drawing_layout_path = (
+            Path(output_dir) / f"page-{page_number:03d}-drawing-view-layout.png"
+        )
+    result = analyze_raster_drawing(
+        image,
+        output_png=overlay_path,
+        orthographic_views_png=orthographic_views_path,
+        drawing_layout_png=drawing_layout_path,
+        extraction=extraction,
+        preserve_full_frame=preserve_full_frame,
+    )
+    if run_ocr:
+        from .offline_ocr import recognize_image_text
+
+        result["ocr_text"], result["offline_ocr"] = recognize_image_text(image)
+    return result
 
 
 def _render_pages(
@@ -374,6 +536,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Run deterministic raster analysis for embedded drawing images.",
     )
     parser.add_argument(
+        "--ocr",
+        action="store_true",
+        help="Run optional offline Tesseract OCR on extracted raster drawing images.",
+    )
+    parser.add_argument(
         "--render-dir",
         help="Optionally save rendered page PNGs to this directory",
     )
@@ -382,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     analysis_dir = None
-    if args.analyze_raster:
+    if args.analyze_raster or args.ocr:
         if args.render_dir:
             analysis_dir = args.render_dir
         elif args.output:
@@ -395,7 +562,8 @@ def main(argv: list[str] | None = None) -> int:
             render_dpi=args.dpi,
             render_dir=args.render_dir,
             classify=args.classify,
-            analyze_raster=args.analyze_raster,
+            analyze_raster=args.analyze_raster or args.ocr,
+            run_ocr=args.ocr,
             analysis_dir=analysis_dir,
         )
     except (PdfInspectionError, ValueError) as exc:
