@@ -9,7 +9,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from tkinter import TclError, filedialog, messagebox
+from tkinter import BooleanVar, TclError, filedialog, messagebox
 
 import customtkinter as ctk
 
@@ -462,6 +462,31 @@ class App(ctk.CTk):
             ),
         )
         review_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
+        raster_views = [
+            view
+            for page in report["pages"]
+            for view in page.get("raster_analysis", {}).get("view_regions", [])
+            if view.get("classification") == "orthographic"
+        ]
+        reconstruct_button = ctk.CTkButton(
+            controls,
+            text="Reconstruct 2D sketch...",
+            width=175,
+            command=lambda: self._show_sketch_reconstruction(
+                window,
+                report["pages"][int(selected_page.get().split()[-1]) - 1],
+                next(
+                    (
+                        page for page in interpretation.get("pages", [])
+                        if page.get("page_number")
+                        == int(selected_page.get().split()[-1])
+                    ),
+                    None,
+                ),
+            ),
+            state="normal" if raster_views else "disabled",
+        )
+        reconstruct_button.grid(row=0, column=4, sticky="e", padx=(8, 0))
 
         image_frame = ctk.CTkFrame(window)
         image_frame.grid(row=2, column=0, sticky="nsew", padx=12, pady=8)
@@ -519,6 +544,29 @@ class App(ctk.CTk):
             open_png_button.configure(
                 state="normal" if image_path is not None and image_path.is_file() else "disabled"
             )
+            reviewed_page = next(
+                (
+                    item for item in interpretation.get("pages", [])
+                    if item.get("page_number") == page_number
+                ),
+                {},
+            )
+            from ..core.sketch_reconstructor import (
+                orthographic_reconstruction_candidates,
+            )
+
+            has_orthographic_candidate = bool(
+                orthographic_reconstruction_candidates(raster, reviewed_page)
+            )
+            reconstruct_button.configure(
+                state=(
+                    "normal"
+                    if has_orthographic_candidate
+                    and drawing_layout
+                    and Path(drawing_layout).is_file()
+                    else "disabled"
+                )
+            )
             if image_path is not None and image_path.is_file():
                 from PIL import Image
 
@@ -548,6 +596,259 @@ class App(ctk.CTk):
             )
 
         show_page()
+
+    def _show_sketch_reconstruction(
+        self,
+        parent,
+        report_page,
+        interpretation_page=None,
+    ):
+        from ..core.sketch_reconstructor import (
+            orthographic_reconstruction_candidates,
+        )
+
+        raster = report_page.get("raster_analysis", {})
+        regions = orthographic_reconstruction_candidates(
+            raster,
+            interpretation_page,
+        )
+        image_path = raster.get("drawing_views_png")
+        if not regions or not image_path or not Path(image_path).is_file():
+            messagebox.showinfo(
+                "2D sketch reconstruction",
+                "This page has no usable orthographic raster-view candidate. "
+                "For this first version, use a raster drawing with a clean, "
+                "single outer profile.",
+                parent=parent,
+            )
+            return
+
+        try:
+            import numpy as np
+            from PIL import Image
+
+            with Image.open(image_path) as source:
+                source_image = np.asarray(source.convert("RGB"))
+        except (ImportError, OSError) as exc:
+            messagebox.showerror(
+                "2D sketch reconstruction",
+                f"Could not load the source drawing image:\n{exc}",
+                parent=parent,
+            )
+            return
+
+        choices = {
+            f"{region['view_id']} - orthographic candidate "
+            f"(heuristic score {region.get('heuristic_score', 'unknown')})":
+                region["view_id"]
+            for region in regions
+        }
+        selected_view = ctk.StringVar(value=next(iter(choices)))
+        known_width = ctk.StringVar()
+        reconstruction = [None]
+
+        window = ctk.CTkToplevel(parent)
+        source_confirmed = BooleanVar(master=window, value=False)
+        window.title("Reconstruct a reviewed 2D sketch")
+        window.geometry("900x760")
+        window.minsize(720, 580)
+        window.grid_columnconfigure(0, weight=1)
+        window.grid_rowconfigure(2, weight=1)
+        ctk.CTkLabel(
+            window,
+            text=(
+                "This first version traces only one clean outer profile from a "
+                "candidate orthographic raster view. It does not read drawing "
+                "dimensions. Enter a width you have verified from the drawing; "
+                "holes, multiple outlines, and uncertain contours are rejected."
+            ),
+            wraplength=860,
+            justify="left",
+        ).grid(row=0, column=0, sticky="ew", padx=12, pady=10)
+
+        controls = ctk.CTkFrame(window)
+        controls.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
+        controls.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(controls, text="Source view").grid(
+            row=0, column=0, sticky="w", padx=8, pady=8
+        )
+        selected_view_option = ctk.CTkOptionMenu(
+            controls,
+            values=list(choices),
+            variable=selected_view,
+            width=300,
+        )
+        selected_view_option.grid(row=0, column=1, sticky="w", padx=8, pady=8)
+        ctk.CTkLabel(
+            controls,
+            text="Verified overall width (mm)",
+        ).grid(row=1, column=0, sticky="w", padx=8, pady=8)
+        ctk.CTkEntry(
+            controls,
+            textvariable=known_width,
+            placeholder_text="Enter a dimension you verified",
+            width=220,
+        ).grid(row=1, column=1, sticky="w", padx=8, pady=8)
+        ctk.CTkCheckBox(
+            controls,
+            text="I confirmed this is an orthographic view suitable for a 2D profile.",
+            variable=source_confirmed,
+            command=lambda: reset_preview(),
+        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=8, pady=8)
+
+        preview_frame = ctk.CTkFrame(window)
+        preview_frame.grid(row=2, column=0, sticky="nsew", padx=12, pady=6)
+        preview_frame.grid_columnconfigure(0, weight=1)
+        preview_frame.grid_rowconfigure(0, weight=1)
+        preview_label = ctk.CTkLabel(
+            preview_frame,
+            text=(
+                "Choose a view and enter its verified overall width, then preview "
+                "the detected outer contour."
+            ),
+            wraplength=820,
+        )
+        preview_label.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        status_label = ctk.CTkLabel(
+            window,
+            text="No sketch has been added to the part.",
+            anchor="w",
+            wraplength=860,
+        )
+        status_label.grid(row=3, column=0, sticky="ew", padx=12, pady=6)
+
+        def preview_profile():
+            from ..core.sketch_reconstructor import (
+                SketchReconstructionError,
+                reconstruct_raster_profile,
+            )
+
+            if not source_confirmed.get():
+                reconstruction[0] = None
+                add_button.configure(state="disabled")
+                status_label.configure(
+                    text="Confirm that the selected candidate is an orthographic "
+                    "view before previewing a sketch."
+                )
+                return
+            try:
+                result = reconstruct_raster_profile(
+                    source_image,
+                    raster,
+                    choices[selected_view.get()],
+                    known_width.get(),
+                )
+            except SketchReconstructionError as exc:
+                reconstruction[0] = None
+                add_button.configure(state="disabled")
+                window.profile_preview = None
+                preview_label.configure(
+                    image="",
+                    text="No valid contour preview is available.",
+                )
+                status_label.configure(text=f"Not reconstructed: {exc}")
+                return
+
+            reconstruction[0] = result
+            preview = Image.fromarray(result["preview_rgb"])
+            preview.thumbnail((760, 500))
+            window.profile_preview = ctk.CTkImage(
+                light_image=preview,
+                dark_image=preview,
+                size=preview.size,
+            )
+            preview_label.configure(image=window.profile_preview, text="")
+            if result["profile_type"] == "polygon":
+                profile_detail = f"{result['vertex_count']} polygon vertices"
+            else:
+                profile_detail = f"{result['profile_type']} profile"
+            status_label.configure(
+                text=(
+                    f"Preview only: {profile_detail}, "
+                    f"{result['width_mm']:g} mm wide × "
+                    f"{result['height_mm']:g} mm high. Scale uses the width "
+                    "you entered. Drawing dimensions and internal features "
+                    "were not extracted. Inspect the green outline before adding."
+                )
+            )
+            add_button.configure(state="normal")
+
+        ctk.CTkButton(
+            controls,
+            text="Preview outer profile",
+            command=preview_profile,
+        ).grid(row=1, column=2, sticky="e", padx=8, pady=8)
+
+        def reset_preview(*_args):
+            reconstruction[0] = None
+            add_button.configure(state="disabled")
+            status_label.configure(text="No sketch has been added to the part.")
+            preview_label.configure(
+                image="",
+                text=(
+                    "Confirm the view and enter its verified overall width, then "
+                    "preview the detected outer contour."
+                ),
+            )
+            window.profile_preview = None
+
+        selected_view_option.configure(command=reset_preview)
+        known_width.trace_add("write", reset_preview)
+
+        def add_sketch():
+            result = reconstruction[0]
+            if result is None:
+                return
+            shape = result["shape"]
+            if shape["type"] == "circle":
+                entities = [Circle(
+                    cx=shape["cx"],
+                    cy=shape["cy"],
+                    diameter=shape["diameter"],
+                )]
+            else:
+                entities = [Polygon(
+                    points=[tuple(point) for point in shape["points"]],
+                )]
+            sketch = Sketch(
+                name=self.part.unique_name("DrawingSketch"),
+                plane="Front",
+                entities=entities,
+            )
+            self.part.features.append(sketch)
+            self.selected = len(self.part.features) - 1
+            self.refresh_all()
+            self.safe_log_to_sw_panel(
+                f"[DRAWING RECONSTRUCTION] Added reviewed {result['profile_type']} "
+                f"outer profile as '{sketch.name}' at {result['width_mm']:g} mm width. "
+                "No dimensions or internal features were inferred."
+            )
+            status_label.configure(
+                text=(
+                    f"Added '{sketch.name}' to the current Part. The traced profile "
+                    "remains visible here for comparison. The main 3D viewport will "
+                    "show a solid only after you add a modeling feature and confirm "
+                    "its depth."
+                )
+            )
+            add_button.configure(state="disabled", text="Sketch added")
+            close_button.configure(text="Close")
+
+        footer = ctk.CTkFrame(window, fg_color="transparent")
+        footer.grid(row=4, column=0, sticky="e", padx=12, pady=10)
+        add_button = ctk.CTkButton(
+            footer,
+            text="Add reviewed sketch to Part",
+            command=add_sketch,
+            state="disabled",
+        )
+        add_button.pack(side="right", padx=(8, 0))
+        close_button = ctk.CTkButton(
+            footer,
+            text="Cancel",
+            command=window.destroy,
+        )
+        close_button.pack(side="right")
 
     @staticmethod
     def _view_review_image_path(page, output_dir):

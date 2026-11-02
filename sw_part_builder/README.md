@@ -90,6 +90,29 @@ Numeric heuristic scores are retained for ranking only; `confidence` is null
 unless a calibrated recognizer supplies it. Bare-number matches are explicitly
 marked as weak text candidates.
 
+#### Reviewed raster-to-sketch reconstruction (first version)
+
+For a page with an orthographic raster-view candidate, choose **Reconstruct 2D
+sketch...** in the drawing analysis window. Select one candidate view, enter an
+overall width that you have verified from the drawing, preview the traced
+outer contour, and explicitly add it to the current Part. The reconstructed
+profile is centered on the Front plane and scaled from that user-entered width;
+no drawing text is treated as a dimension. A view already reviewed as
+non-orthographic is excluded, and the wizard also requires you to confirm the
+selected view before tracing.
+
+After adding, the reconstruction preview stays open for comparison while the
+new sketch is selected in the Part Builder. The 3D viewport remains empty until
+you add a solid feature with a confirmed depth.
+
+This is deliberately limited to one clean, closed outer contour. Isometric
+views, multiple disconnected outlines, detected internal loops, invalid scale,
+and contours that touch the crop boundary are rejected. The preview highlights
+the proposed contour; inspect it before adding. Holes, inner details, dimension
+association, and automatic multi-view reconstruction are not supported. The
+result is an editable 2D sketch only; add a confirmed modeling feature such as
+an extrusion and depth separately to create a 3D solid.
+
 Offline OCR uses the local Tesseract 5 installation with English data on the
 current development machine. The GUI requests local OCR during drawing
 analysis; PDF CLI callers can opt in with `--analyze-raster --ocr`.
