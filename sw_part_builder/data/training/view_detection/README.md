@@ -18,3 +18,35 @@ with section and detail views are needed before training a useful classifier.
 
 The source PDFs are existing local fixtures. Check their usage terms before
 redistributing the images or using them outside this local prototype.
+
+## Preparing new drawings
+
+From the `sw_part_builder` directory, run:
+
+```powershell
+python prepare_view_dataset.py ..\path\to\drawings --output data\training\view_detection
+```
+
+The input can be a directory containing PDF, PNG, JPG, TIFF, or BMP files.
+PDF pages are rendered at 300 DPI by default. The script writes:
+
+```text
+images/raw/          original rendered pages
+images/text-masked/  copies with OCR-detected text boxes painted white
+ocr/                 Tesseract reports for review
+manifest.json        drawing-level train/val/test assignments
+```
+
+Tesseract must be installed as an application and available on `PATH`, or
+configured with `ALIA_TESSERACT_CMD`. Annotate the `images/text-masked` files
+in CVAT or Label Studio with:
+
+```text
+orthographic
+section
+detail
+isometric
+```
+
+Review and tighten every view box before exporting COCO annotations. Do not
+split pages from one source drawing across train, validation, and test.
