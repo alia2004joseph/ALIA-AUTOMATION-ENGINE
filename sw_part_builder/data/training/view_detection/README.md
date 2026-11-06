@@ -51,6 +51,41 @@ isometric
 Review and tighten every view box before exporting COCO annotations. Do not
 split pages from one source drawing across train, validation, and test.
 
+## Validate the CVAT export
+
+Place the exported COCO JSON in `cvat_export/instances_default.json`. The
+original masked images should remain under `images/text-masked/`. Validate the
+paths and boxes before training:
+
+```powershell
+python validate_view_annotations.py `
+  data/training/view_detection/cvat_export/instances_default.json `
+  --image-root data/training/view_detection
+```
+
+The export may contain fewer pages than the original dataset if pages were
+deleted in CVAT. That is expected. The validator must report `Validation
+passed.` before training.
+
+## Train the first detector
+
+If `manifest.json` is available, pass it so pages from the same source drawing
+stay together. Otherwise the training script creates a deterministic fallback
+split:
+
+```powershell
+python train_view_detector.py `
+  --annotations data/training/view_detection/cvat_export/instances_default.json `
+  --image-root data/training/view_detection `
+  --manifest data/training/view_detection/manifest.json `
+  --output data/training/view_detection/view_detector.pt `
+  --epochs 10
+```
+
+The first run downloads torchvision's pretrained Faster R-CNN weights. A GPU
+is used automatically when CUDA is available; otherwise training runs on the
+CPU and may take substantially longer.
+
 ## Automatic pre-annotations
 
 To generate proposals from the analyzer instead of drawing every box from
