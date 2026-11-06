@@ -173,6 +173,9 @@ class EditorPanel(ctk.CTkScrollableFrame):
                             lambda v, e=ent: setattr(e, "points", v))
                 ctk.CTkLabel(inner, text="format: x,y; x,y; x,y", text_color="#9A9A9A",
                              font=ctk.CTkFont(size=11)).pack(anchor="w")
+            else:
+                ctk.CTkLabel(inner, text=f"{len(ent.segments)} exact line/arc segments",
+                             text_color="#9A9A9A").pack(anchor="w")
 
         add = ctk.CTkFrame(self, fg_color="transparent")
         add.pack(fill="x", pady=(6, 2))

@@ -15,7 +15,7 @@ from typing import List, Optional
 
 from .model import (
     END_CONDITIONS, DIRECTIONS, OPERATIONS, PLANES,
-    Circle, EdgeModifier, Extrude, Part, Polygon, Rect, Revolve, Sketch,
+    ArcPath, Circle, EdgeModifier, Extrude, Part, Polygon, Rect, Revolve, Sketch,
     Sketch3D, WeldmentMember,
 )
 
@@ -1089,6 +1089,17 @@ def _sketch_bounds(sketch: Sketch):
         elif isinstance(entity, Polygon):
             xs.extend(point[0] for point in entity.points)
             ys.extend(point[1] for point in entity.points)
+        elif isinstance(entity, ArcPath):
+            xs.append(entity.start[0])
+            ys.append(entity.start[1])
+            for segment in entity.segments:
+                xs.append(segment["end"][0])
+                ys.append(segment["end"][1])
+                if segment["kind"] == "arc":
+                    cx, cy = segment["center"]
+                    radius = segment["radius"]
+                    xs.extend((cx - radius, cx + radius))
+                    ys.extend((cy - radius, cy + radius))
     if not xs or not ys:
         return None
     return max(xs) - min(xs), max(ys) - min(ys)
@@ -1123,6 +1134,34 @@ def _check_sketch(sk: Sketch, issues: List[Issue]) -> None:
                 err(f"{label}: edges cross each other.")
             elif abs(polygon_area(e.points)) < 1e-9:
                 err(f"{label}: has zero area.")
+        elif isinstance(e, ArcPath):
+            current = e.start
+            if not e.segments:
+                err(f"{label}: needs at least one segment.")
+            for segment in e.segments:
+                end = segment.get("end", ())
+                if len(end) != 2 or not all(_finite(value) for value in end):
+                    err(f"{label}: segment endpoints must be finite 2D points.")
+                    break
+                if segment.get("kind") == "arc":
+                    center = segment.get("center", ())
+                    radius = segment.get("radius", 0)
+                    if (len(center) != 2 or not all(_finite(value) for value in center)
+                            or not _finite(radius) or radius <= 0):
+                        err(f"{label}: arcs need a finite center and positive radius.")
+                        break
+                    if abs(math.dist(current, center) - radius) > 1e-4:
+                        err(f"{label}: arc start does not lie on its circle.")
+                        break
+                    if abs(math.dist(end, center) - radius) > 1e-4:
+                        err(f"{label}: arc end does not lie on its circle.")
+                        break
+                elif segment.get("kind") != "line":
+                    err(f"{label}: segment kind must be 'line' or 'arc'.")
+                    break
+                current = end
+            if e.segments and math.dist(current, e.start) > 1e-4:
+                err(f"{label}: path must end at its start point.")
     for i in range(len(sk.entities)):
         for j in range(i + 1, len(sk.entities)):
             if _relation(sk.entities[i], sk.entities[j]) == "overlap":

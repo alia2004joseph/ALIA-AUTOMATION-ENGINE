@@ -17,12 +17,13 @@ import base64
 import binascii
 import copy
 import json
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from ..core.model import (
-    Circle, EdgeModifier, Extrude, Part, Polygon, Rect, Revolve, Sketch, Sketch3D,
+    ArcPath, Circle, EdgeModifier, Extrude, Part, Polygon, Rect, Revolve, Sketch, Sketch3D,
     WeldmentMember,
 )
 
@@ -274,6 +275,28 @@ class SolidWorksBuilder:
                 for i in range(n):
                     (x1, y1), (x2, y2) = e.points[i], e.points[(i + 1) % n]
                     self.call("CreateLine", sm.CreateLine, x1 * M, y1 * M, 0, x2 * M, y2 * M, 0)
+            elif isinstance(e, ArcPath):
+                current = e.start
+                for segment in e.segments:
+                    end = segment["end"]
+                    if segment["kind"] == "line":
+                        self.call("CreateLine", sm.CreateLine,
+                                  current[0] * M, current[1] * M, 0,
+                                  end[0] * M, end[1] * M, 0)
+                    else:
+                        cx, cy = segment["center"]
+                        radius = segment["radius"]
+                        start_angle = math.atan2(current[1] - cy, current[0] - cx)
+                        end_angle = math.atan2(end[1] - cy, end[0] - cx)
+                        sweep = (end_angle - start_angle + math.pi) % (2 * math.pi) - math.pi
+                        midpoint_angle = start_angle + sweep / 2
+                        midpoint = (cx + radius * math.cos(midpoint_angle),
+                                    cy + radius * math.sin(midpoint_angle))
+                        self.call("Create3PointArc", sm.Create3PointArc,
+                                  current[0] * M, current[1] * M, 0,
+                                  end[0] * M, end[1] * M, 0,
+                                  midpoint[0] * M, midpoint[1] * M, 0)
+                    current = end
         self.call("InsertSketch(exit)", m.SketchManager.InsertSketch, True)
         feat = self._last_feature("ProfileFeature")
         if feat is None:

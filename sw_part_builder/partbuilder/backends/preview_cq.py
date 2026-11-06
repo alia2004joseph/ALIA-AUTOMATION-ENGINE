@@ -4,6 +4,7 @@ actual geometry, not a drawing. Also used to compute the volume after each
 feature, which the SolidWorks backend compares against to verify its build.
 """
 from dataclasses import dataclass, field
+import math
 from typing import Dict, List
 
 try:
@@ -13,10 +14,10 @@ try:
 except ImportError:  # pragma: no cover
     AVAILABLE = False
 
-from ..core.model import Circle, Extrude, Part, Polygon, Rect, Sketch
+from ..core.model import ArcPath, Circle, Extrude, Part, Polygon, Rect, Sketch
 
 BIG = 100000.0  # mm, "through all"
-EDGE_SAMPLES = 24
+EDGE_SAMPLES = 64
 
 # (origin, x direction, normal) - same as SolidWorks default planes
 _PLANE_DEFS = {
@@ -58,6 +59,27 @@ def _profile(sketch: Sketch):
             wp = wp.moveTo(*pts[0])
             for p in pts[1:]:
                 wp = wp.lineTo(*p)
+            wp = wp.close()
+        elif isinstance(e, ArcPath):
+            wp = wp.moveTo(*e.start)
+            current = e.start
+            for segment in e.segments:
+                end = segment["end"]
+                if segment["kind"] == "line":
+                    wp = wp.lineTo(*end)
+                else:
+                    cx, cy = segment["center"]
+                    radius = segment["radius"]
+                    start_angle = math.atan2(current[1] - cy, current[0] - cx)
+                    end_angle = math.atan2(end[1] - cy, end[0] - cx)
+                    sweep = (end_angle - start_angle + math.pi) % (2 * math.pi) - math.pi
+                    midpoint_angle = start_angle + sweep / 2
+                    midpoint = (
+                        cx + radius * math.cos(midpoint_angle),
+                        cy + radius * math.sin(midpoint_angle),
+                    )
+                    wp = wp.threePointArc(midpoint, end)
+                current = end
             wp = wp.close()
     return wp
 

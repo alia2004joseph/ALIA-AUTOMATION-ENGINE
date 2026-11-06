@@ -6,7 +6,7 @@ import pytest
 pytest.importorskip("cadquery")
 
 from partbuilder.backends.preview_cq import build_preview
-from partbuilder.core.model import Part
+from partbuilder.core.model import ArcPath, Extrude, Part, Sketch
 
 EXAMPLES = os.path.join(os.path.dirname(__file__), "..", "examples")
 
@@ -43,3 +43,29 @@ def test_cut_that_misses_gives_warning():
     pocket.direction = "one"   # cuts upward into empty space
     res = build_preview(part)
     assert any("Pocket" in w for w in res.warnings)
+
+
+def test_arc_path_builds_as_a_true_circular_profile():
+    part = Part(features=[
+        Sketch(name="QuarterCircle", plane="Top", entities=[ArcPath(
+            start=(10, 0),
+            segments=[
+                {"kind": "arc", "center": (0, 0), "radius": 10, "end": (0, 10)},
+                {"kind": "line", "end": (0, 0)},
+                {"kind": "line", "end": (10, 0)},
+            ],
+        )]),
+        Extrude(name="ArcPrism", sketch="QuarterCircle", depth=2),
+    ])
+    result = build_preview(part)
+    assert result.volumes["ArcPrism"] == pytest.approx(25 * math.pi * 2, rel=1e-6)
+
+
+def test_house_pockets_cut_inward_from_the_web_top():
+    part = Part.load(os.path.join(EXAMPLES, "house.json"))
+    result = build_preview(part, tessellate=False)
+    shape = result.body.val()
+    assert shape.isInside((60, 8, 0), 1e-6)
+    assert not shape.isInside((60, 10, 0), 1e-6)
+    assert all(entity.kind == "arc_path" for entity in part.find("PocketProfile").entities)
+    assert any(edge.geomType() == "CIRCLE" for edge in shape.Edges())

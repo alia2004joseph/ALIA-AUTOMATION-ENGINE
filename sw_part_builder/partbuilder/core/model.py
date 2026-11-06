@@ -65,7 +65,15 @@ class Polygon(_Entity):
     kind: ClassVar[str] = "polygon"
 
 
-ENTITY_TYPES = {c.kind: c for c in (Rect, Circle, Polygon)}
+@dataclass
+class ArcPath(_Entity):
+    """Closed path built from line and circular-arc commands."""
+    start: Tuple[float, float] = (0.0, 0.0)
+    segments: List[dict] = field(default_factory=list)
+    kind: ClassVar[str] = "arc_path"
+
+
+ENTITY_TYPES = {c.kind: c for c in (Rect, Circle, Polygon, ArcPath)}
 
 
 def entity_from_dict(data: dict):
@@ -74,6 +82,19 @@ def entity_from_dict(data: dict):
     cls = ENTITY_TYPES[kind]
     if cls is Polygon:
         data["points"] = [(float(x), float(y)) for x, y in data["points"]]
+    elif cls is ArcPath:
+        data["start"] = tuple(float(v) for v in data["start"])
+        data["segments"] = [
+            {
+                **segment,
+                "end": tuple(float(v) for v in segment["end"]),
+                **({"center": tuple(float(v) for v in segment["center"])}
+                   if segment["kind"] == "arc" else {}),
+                **({"radius": float(segment["radius"])}
+                   if segment["kind"] == "arc" else {}),
+            }
+            for segment in data["segments"]
+        ]
     return cls(**data)
 
 

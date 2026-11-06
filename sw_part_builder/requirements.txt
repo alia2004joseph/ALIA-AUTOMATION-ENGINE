@@ -10,3 +10,6 @@ pdfplumber
 pypdfium2
 ezdxf
 pytesseract
+scikit-learn
+torch
+torchvision

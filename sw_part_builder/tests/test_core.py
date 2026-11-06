@@ -4,7 +4,7 @@ import os
 import pytest
 
 from partbuilder.core.model import (
-    Circle, EdgeModifier, Extrude, Part, Polygon, Rect, Revolve, Sketch, Sketch3D,
+    ArcPath, Circle, EdgeModifier, Extrude, Part, Polygon, Rect, Revolve, Sketch, Sketch3D,
     WeldmentMember,
 )
 from partbuilder.core.validate import (
@@ -132,6 +132,23 @@ def test_advanced_features_json_roundtrip():
         ),
     ])
     assert Part.from_json(part.to_json()).to_dict() == part.to_dict()
+
+
+def test_arc_path_json_roundtrip_and_validation():
+    path = ArcPath(
+        start=(10, 0),
+        segments=[
+            {"kind": "arc", "center": (0, 0), "radius": 10, "end": (0, 10)},
+            {"kind": "line", "end": (0, 0)},
+            {"kind": "line", "end": (10, 0)},
+        ],
+    )
+    part = Part(features=[
+        Sketch(name="ArcProfile", entities=[path]),
+        Extrude(name="ArcSolid", sketch="ArcProfile", depth=2),
+    ])
+    assert Part.from_json(part.to_json()).to_dict() == part.to_dict()
+    assert not has_errors(validate(part))
 
 
 def test_edge_modifier_uses_feature_bounds_for_radius_preflight():

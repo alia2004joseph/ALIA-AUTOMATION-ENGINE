@@ -1,0 +1,113 @@
+{
+  "name": "PracticeProblem_1_2",
+  "source": "tests/fixtures/practice_problems_1_2_eng_raster_overlay.png",
+  "units": "mm",
+  "description": "Level 1 stepped support bracket reconstructed from the supplied engineering drawing. The two repeated circular features are diameter 6 bosses at 15 mm centers; the 7 mm boss projection is the recipe's interpretation of the 7 TYP callout.",
+  "parameters": {
+    "BASE_LENGTH": 78,
+    "BASE_WIDTH": 28,
+    "BASE_THICKNESS": 8,
+    "STEP1_LENGTH": 24,
+    "STEP1_HEIGHT": 16,
+    "STEP2_LENGTH": 16,
+    "STEP2_RISE": 18,
+    "OVERALL_HEIGHT": 58,
+    "SUPPORT_ANGLE_DEG": 65,
+    "REAR_SLOPE_LENGTH": 36,
+    "SLOT_WIDTH": 5,
+    "SLOT_LENGTH": 36,
+    "SLOT_START_OFFSET": 6,
+    "BOSS_DIAMETER": 6,
+    "BOSS_HEIGHT": 7,
+    "BOSS_SPACING": 15,
+    "BOSS_EDGE_OFFSET": 7.5
+  },
+  "features": [
+    {
+      "type": "sketch",
+      "name": "SideProfile",
+      "plane": "Front",
+      "offset": 0,
+      "entities": [
+        {
+          "kind": "polygon",
+          "points": [
+            [0, 0],
+            [78, 0],
+            [78, 8],
+            [78, 34],
+            [51.301, 58],
+            [40, 34],
+            [24, 34],
+            [24, 16],
+            [0, 16]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "BracketBody",
+      "sketch": "SideProfile",
+      "operation": "boss",
+      "end": "blind",
+      "depth": 28,
+      "direction": "one"
+    },
+    {
+      "type": "sketch",
+      "name": "AngledSlotProfile",
+      "plane": "Front",
+      "offset": 0,
+      "entities": [
+        {
+          "kind": "polygon",
+          "points": [
+            [58.028, 52.932],
+            [53.496, 55.045],
+            [38.282, 22.419],
+            [42.814, 20.306]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "AngledSlot",
+      "sketch": "AngledSlotProfile",
+      "operation": "cut",
+      "end": "through_all",
+      "depth": 0,
+      "direction": "one"
+    },
+    {
+      "type": "sketch",
+      "name": "BossProfiles",
+      "plane": "Top",
+      "offset": 54.85,
+      "entities": [
+        {
+          "kind": "circle",
+          "cx": 54.5,
+          "cy": -7.5,
+          "diameter": 6
+        },
+        {
+          "kind": "circle",
+          "cx": 54.5,
+          "cy": -22.5,
+          "diameter": 6
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "CircularBosses",
+      "sketch": "BossProfiles",
+      "operation": "boss",
+      "end": "blind",
+      "depth": 7,
+      "direction": "one"
+    }
+  ]
+}

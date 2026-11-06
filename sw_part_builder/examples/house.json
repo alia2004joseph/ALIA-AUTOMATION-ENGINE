@@ -1,0 +1,371 @@
+{
+  "name": "BearingHousing",
+  "source": "house.py",
+  "units": "mm",
+  "description": "Bearing housing with a central boss, two side lugs, a pocketed web, and through bores and holes.",
+  "parameters": {
+    "BOSS_OD": 105,
+    "BOSS_WALL": 12,
+    "BOSS_HEIGHT": 63,
+    "LUG_SPACING": 175,
+    "HOLE_D": 23.33,
+    "LUG_WALL": 12,
+    "LUG_HEIGHT": 25,
+    "PLATE_T": 12,
+    "POCKET_DEPTH": 3,
+    "RIM": 3,
+    "FILLET_R": 3,
+    "BORE_D": 81,
+    "LUG_OD": 47.33
+  },
+  "features": [
+    {
+      "type": "sketch",
+      "name": "WebProfile",
+      "plane": "Top",
+      "offset": 0.0,
+      "entities": [
+        {
+          "kind": "polygon",
+          "points": [
+            [
+              17.301,
+              49.567382410210044
+            ],
+            [
+              95.29863171428572,
+              22.343087709288014
+            ],
+            [
+              95.29863171428572,
+              -22.343087709288014
+            ],
+            [
+              17.301,
+              -49.567382410210044
+            ],
+            [
+              -17.301,
+              -49.567382410210044
+            ],
+            [
+              -95.29863171428572,
+              -22.343087709288014
+            ],
+            [
+              -95.29863171428572,
+              22.343087709288014
+            ],
+            [
+              -17.301,
+              49.567382410210044
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "WebBody",
+      "sketch": "WebProfile",
+      "operation": "boss",
+      "end": "blind",
+      "depth": 12,
+      "direction": "one"
+    },
+    {
+      "type": "sketch",
+      "name": "PocketProfile",
+      "plane": "Top",
+      "offset": 12,
+      "entities": [
+        {
+          "kind": "arc_path",
+          "start": [
+            -46.33292759617235,
+            30.55339294362987
+          ],
+          "segments": [
+            {
+              "kind": "arc",
+              "end": [
+                -49.82603874036699,
+                35.037349549351596
+              ],
+              "center": [
+                -48.83741016893842,
+                32.20492769733959
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "line",
+              "end": [
+                -71.80932762069415,
+                27.36430202444945
+              ]
+            },
+            {
+              "kind": "arc",
+              "end": [
+                -72.50746469403899,
+                22.050988868971668
+              ],
+              "center": [
+                -70.82069904926557,
+                24.531880172437447
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "arc",
+              "end": [
+                -72.50746469403899,
+                -22.050988868971668
+              ],
+              "center": [
+                -87.5,
+                0.0
+              ],
+              "radius": 26.665
+            },
+            {
+              "kind": "arc",
+              "end": [
+                -71.80932762069415,
+                -27.36430202444945
+              ],
+              "center": [
+                -70.82069904926557,
+                -24.531880172437447
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "line",
+              "end": [
+                -49.82603874036699,
+                -35.037349549351596
+              ]
+            },
+            {
+              "kind": "arc",
+              "end": [
+                -46.33292759617235,
+                -30.55339294362987
+              ],
+              "center": [
+                -48.83741016893842,
+                -32.20492769733959
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "arc",
+              "end": [
+                -46.33292759617235,
+                30.55339294362987
+              ],
+              "center": [
+                -0.0,
+                0.0
+              ],
+              "radius": 55.5
+            }
+          ]
+        },
+        {
+          "kind": "arc_path",
+          "start": [
+            46.33292759617235,
+            30.55339294362987
+          ],
+          "segments": [
+            {
+              "kind": "arc",
+              "end": [
+                49.82603874036699,
+                35.037349549351596
+              ],
+              "center": [
+                48.83741016893842,
+                32.20492769733959
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "line",
+              "end": [
+                71.80932762069415,
+                27.36430202444945
+              ]
+            },
+            {
+              "kind": "arc",
+              "end": [
+                72.50746469403899,
+                22.050988868971668
+              ],
+              "center": [
+                70.82069904926557,
+                24.531880172437447
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "arc",
+              "end": [
+                72.50746469403899,
+                -22.050988868971668
+              ],
+              "center": [
+                87.5,
+                0.0
+              ],
+              "radius": 26.665
+            },
+            {
+              "kind": "arc",
+              "end": [
+                71.80932762069415,
+                -27.36430202444945
+              ],
+              "center": [
+                70.82069904926557,
+                -24.531880172437447
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "line",
+              "end": [
+                49.82603874036699,
+                -35.037349549351596
+              ]
+            },
+            {
+              "kind": "arc",
+              "end": [
+                46.33292759617235,
+                -30.55339294362987
+              ],
+              "center": [
+                48.83741016893842,
+                -32.20492769733959
+              ],
+              "radius": 3.0
+            },
+            {
+              "kind": "arc",
+              "end": [
+                46.33292759617235,
+                30.55339294362987
+              ],
+              "center": [
+                0.0,
+                0.0
+              ],
+              "radius": 55.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "PocketCut",
+      "sketch": "PocketProfile",
+      "operation": "cut",
+      "end": "blind",
+      "depth": 3,
+      "direction": "reverse"
+    },
+    {
+      "type": "sketch",
+      "name": "BossProfile",
+      "plane": "Top",
+      "offset": 0.0,
+      "entities": [
+        {
+          "kind": "circle",
+          "cx": 0.0,
+          "cy": 0.0,
+          "diameter": 105
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "Boss",
+      "sketch": "BossProfile",
+      "operation": "boss",
+      "end": "blind",
+      "depth": 63,
+      "direction": "one"
+    },
+    {
+      "type": "sketch",
+      "name": "LugProfiles",
+      "plane": "Top",
+      "offset": 0.0,
+      "entities": [
+        {
+          "kind": "circle",
+          "cx": -87.5,
+          "cy": 0.0,
+          "diameter": 47.33
+        },
+        {
+          "kind": "circle",
+          "cx": 87.5,
+          "cy": 0.0,
+          "diameter": 47.33
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "Lugs",
+      "sketch": "LugProfiles",
+      "operation": "boss",
+      "end": "blind",
+      "depth": 25,
+      "direction": "one"
+    },
+    {
+      "type": "sketch",
+      "name": "ThroughHoleProfile",
+      "plane": "Top",
+      "offset": 0.0,
+      "entities": [
+        {
+          "kind": "circle",
+          "cx": 0.0,
+          "cy": 0.0,
+          "diameter": 81
+        },
+        {
+          "kind": "circle",
+          "cx": -87.5,
+          "cy": 0.0,
+          "diameter": 23.33
+        },
+        {
+          "kind": "circle",
+          "cx": 87.5,
+          "cy": 0.0,
+          "diameter": 23.33
+        }
+      ]
+    },
+    {
+      "type": "extrude",
+      "name": "ThroughHoles",
+      "sketch": "ThroughHoleProfile",
+      "operation": "cut",
+      "end": "through_all",
+      "depth": 0.0,
+      "direction": "one"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "task": "drawing_view_detection_and_classification",
+  "bbox_format": "xywh pixels, origin at image top-left",
+  "classes": [
+    "orthographic",
+    "section",
+    "detail",
+    "isometric",
+    "unknown"
+  ],
+  "annotation_notes": {
+    "class_labels": "Reviewed against the source drawing pages.",
+    "bounding_boxes": "Source-coordinate regions proposed by the raster analyzer and visually checked; some include nearby callouts and need tighter annotation before production training.",
+    "split_policy": "All four source drawings are in train for this bootstrap set. Split future data by drawing or part family, never by view crop."
+  },
+  "samples": [
+    {
+      "drawing_id": "practice_problem_1_1",
+      "source_pdf": "tests/fixtures/practice_problems_1_1_eng.pdf",
+      "image": "images/practice_problems_1_1_eng.png",
+      "width_px": 706,
+      "height_px": 613,
+      "split": "train",
+      "views": [
+        {"view_id": "view-01", "bbox_px": [8, 217, 382, 394], "label": "orthographic"},
+        {"view_id": "view-02", "bbox_px": [98, 10, 234, 165], "label": "orthographic"},
+        {"view_id": "view-03", "bbox_px": [460, 59, 238, 371], "label": "isometric"}
+      ]
+    },
+    {
+      "drawing_id": "practice_problem_1_2",
+      "source_pdf": "tests/fixtures/practice_problems_1_2_eng.pdf",
+      "image": "images/practice_problems_1_2_eng.png",
+      "width_px": 973,
+      "height_px": 697,
+      "split": "train",
+      "views": [
+        {"view_id": "view-01", "bbox_px": [16, 355, 236, 335], "label": "orthographic"},
+        {"view_id": "view-02", "bbox_px": [201, 60, 204, 223], "label": "isometric"},
+        {"view_id": "view-03", "bbox_px": [375, 348, 479, 338], "label": "orthographic"},
+        {"view_id": "view-04", "bbox_px": [661, 13, 263, 269], "label": "section"}
+      ]
+    },
+    {
+      "drawing_id": "practice_problem_1_20",
+      "source_pdf": "tests/fixtures/practice_problems_1_20_eng.pdf",
+      "image": "images/practice_problems_1_20_eng.png",
+      "width_px": 552,
+      "height_px": 380,
+      "split": "train",
+      "views": [
+        {"view_id": "view-01", "bbox_px": [18, 262, 243, 106], "label": "orthographic"},
+        {"view_id": "view-02", "bbox_px": [48, 9, 216, 226], "label": "orthographic"},
+        {"view_id": "view-03", "bbox_px": [350, 43, 181, 170], "label": "isometric"},
+        {"view_id": "view-04", "bbox_px": [366, 284, 182, 84], "label": "orthographic"}
+      ]
+    },
+    {
+      "drawing_id": "scanned_alia",
+      "source_pdf": "tests/fixtures/scanned_alia.pdf",
+      "image": "images/scanned_alia.png",
+      "width_px": 3805,
+      "height_px": 2677,
+      "split": "train",
+      "views": [
+        {"view_id": "view-01", "bbox_px": [346, 67, 986, 564], "label": "section"},
+        {"view_id": "view-02", "bbox_px": [672, 1281, 824, 511], "label": "orthographic"},
+        {"view_id": "view-03", "bbox_px": [1915, 885, 549, 596], "label": "detail"},
+        {"view_id": "view-04", "bbox_px": [2603, 641, 834, 596], "label": "orthographic"},
+        {"view_id": "view-05", "bbox_px": [2885, 314, 580, 304], "label": "isometric"},
+        {"view_id": "view-06", "bbox_px": [2892, 1538, 466, 498], "label": "isometric"}
+      ]
+    }
+  ]
+}
