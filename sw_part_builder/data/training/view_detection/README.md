@@ -50,3 +50,18 @@ isometric
 
 Review and tighten every view box before exporting COCO annotations. Do not
 split pages from one source drawing across train, validation, and test.
+
+## Automatic pre-annotations
+
+To generate proposals from the analyzer instead of drawing every box from
+scratch, run:
+
+```powershell
+python preannotate_view_dataset.py
+```
+
+The command writes `preannotations.json` in COCO format and
+`preannotations-review.json` with the analyzer evidence. Import
+`preannotations.json` into CVAT, then review, move, resize, relabel, or delete
+every proposal. These are starting points only; they must not be used as
+ground-truth labels without review.

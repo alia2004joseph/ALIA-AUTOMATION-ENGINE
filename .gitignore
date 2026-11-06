@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+sw_part_builder/data/raw/
+sw_part_builder/data/training/view_detection/images/raw/
+sw_part_builder/data/training/view_detection/images/text-masked/
+sw_part_builder/data/training/view_detection/ocr/
+sw_part_builder/data/training/view_detection/manifest.json
+sw_part_builder/data/training/view_detection/preannotations*.json
