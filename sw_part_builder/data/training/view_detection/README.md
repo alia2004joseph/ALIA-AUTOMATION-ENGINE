@@ -120,6 +120,20 @@ Use only the clean images for model input. Overlay and crop files are for
 review and should not be used as model inputs. The archive is local and
 ignored by Git alongside the other generated training data.
 
+## Evaluate the model from the GUI
+
+Download the trained checkpoint from Colab and place it at:
+
+```text
+data/training/view_detection/models/view_detector.pt
+```
+
+The next GUI analysis automatically runs the detector on each clean raster
+page. It saves prediction data in the drawing's `view-detector/` folder and
+adds a **Model predictions** preview mode with red labeled boxes. If the
+checkpoint is absent, drawing analysis still works normally and only model
+evaluation is skipped.
+
 ## Automatic pre-annotations
 
 To generate proposals from the analyzer instead of drawing every box from

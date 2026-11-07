@@ -320,6 +320,29 @@ class App(ctk.CTk):
                     / "view_detection",
                 )
                 report["raster_training_exports"] = training_exports
+                checkpoint = (
+                    Path(__file__).resolve().parents[2]
+                    / "data"
+                    / "training"
+                    / "view_detection"
+                    / "models"
+                    / "view_detector.pt"
+                )
+                if checkpoint.is_file():
+                    from ..core.view_detector import evaluate_report
+
+                    report["view_detector_evaluation"] = evaluate_report(
+                        report,
+                        checkpoint,
+                        output_dir / "view-detector",
+                    )
+                else:
+                    report["view_detector_evaluation"] = {
+                        "status": "checkpoint_missing",
+                        "checkpoint": str(checkpoint),
+                        "prediction_count": 0,
+                        "pages": [],
+                    }
                 report_path.write_text(
                     json.dumps(report, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8",
@@ -362,6 +385,8 @@ class App(ctk.CTk):
             f"{interpretation['summary']['symbol_annotation_count']} symbol annotation(s). "
             f"Offline OCR: {report.get('offline_ocr', {}).get('status', 'not reported')}. "
             f"{len(report.get('raster_training_exports', []))} training image(s) archived. "
+            f"{report.get('view_detector_evaluation', {}).get('prediction_count', 0)} "
+            f"model prediction(s). "
             f"Reports and PNG files saved to {output_dir}."
         )
         self._show_pdf_analysis(pdf_path, output_dir, report, interpretation)
@@ -398,9 +423,15 @@ class App(ctk.CTk):
             ).is_file()
             for page in report["pages"]
         )
+        has_model_overlay = any(
+            page.get("raster_analysis", {}).get("view_detector_overlay_png")
+            and Path(page["raster_analysis"]["view_detector_overlay_png"]).is_file()
+            for page in report["pages"]
+        )
         selected_image = ctk.StringVar(
             value=(
                 "Drawing views (source layout)" if has_drawing_layout
+                else "Model predictions" if has_model_overlay
                 else "Analysis overlay" if has_any_overlay
                 else "Full page"
             )
@@ -414,6 +445,7 @@ class App(ctk.CTk):
             controls,
             values=[
                 "Drawing views (source layout)",
+                "Model predictions",
                 "Analysis overlay",
                 "Full page",
             ],
@@ -519,15 +551,18 @@ class App(ctk.CTk):
             page = report["pages"][page_number - 1]
             raster = page.get("raster_analysis", {})
             overlay = raster.get("full_page_overlay_png") or raster.get("overlay_png")
+            model_overlay = raster.get("view_detector_overlay_png")
             drawing_layout = raster.get("drawing_views_png")
             rendered = page.get("render", {}).get("file")
             has_drawing_layout = bool(
                 drawing_layout and Path(drawing_layout).is_file()
             )
             has_overlay = bool(overlay and Path(overlay).is_file())
+            has_model_overlay = bool(model_overlay and Path(model_overlay).is_file())
             has_rendered = bool(rendered and (output_dir / rendered).is_file())
             has_preview = (
                 has_drawing_layout
+                or has_model_overlay
                 or has_overlay
                 or has_rendered
             )
@@ -537,9 +572,12 @@ class App(ctk.CTk):
                 and selected_image.get() == "Drawing views (source layout)"
             ):
                 selected_image.set(
-                    "Analysis overlay" if has_overlay
+                    "Model predictions" if has_model_overlay
+                    else "Analysis overlay" if has_overlay
                     else "Full page"
                 )
+            elif not has_model_overlay and selected_image.get() == "Model predictions":
+                selected_image.set("Analysis overlay" if has_overlay else "Full page")
             elif not has_overlay and selected_image.get() == "Analysis overlay":
                 selected_image.set("Full page")
             if (
@@ -547,6 +585,8 @@ class App(ctk.CTk):
                 and has_drawing_layout
             ):
                 image_path = Path(drawing_layout)
+            elif selected_image.get() == "Model predictions" and has_model_overlay:
+                image_path = Path(model_overlay)
             elif selected_image.get() == "Analysis overlay" and has_overlay:
                 image_path = Path(overlay)
             else:

@@ -48,10 +48,16 @@ def export_raster_training_images(
             clean_dir / f"{sample_id}.png",
         )
         if clean_path is None:
+            render = page.get("render") or {}
+            render_directory = report.get("rendering", {}).get("directory")
+            render_file = render.get("file")
+            fallback_path = (
+                Path(render_directory) / str(render_file)
+                if render_directory and render_file
+                else None
+            )
             clean_path = _copy_if_file(
-                page.get("render", {}).get("file")
-                and Path(report.get("rendering", {}).get("directory", "")) /
-                str(page["render"]["file"]),
+                fallback_path,
                 clean_dir / f"{sample_id}.png",
             )
         overlay_path = _copy_if_file(

@@ -12,4 +12,5 @@ sw_part_builder/data/training/view_detection/images/raster-analyzer-orthographic
 sw_part_builder/data/training/view_detection/ocr/
 sw_part_builder/data/training/view_detection/manifest.json
 sw_part_builder/data/training/view_detection/raster-analyzer-manifest.json
+sw_part_builder/data/training/view_detection/models/
 sw_part_builder/data/training/view_detection/preannotations*.json
