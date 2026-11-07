@@ -86,6 +86,24 @@ The first run downloads torchvision's pretrained Faster R-CNN weights. A GPU
 is used automatically when CUDA is available; otherwise training runs on the
 CPU and may take substantially longer.
 
+## Evaluate the trained detector
+
+Run this after downloading `view_detector.pt` from Colab. The evaluator uses
+the held-out test split, reports precision, recall, and F1 at IoU 0.50, and
+writes preview images with green ground-truth boxes and red predictions:
+
+```powershell
+python evaluate_view_detector.py `
+  --annotations data/training/view_detection/cvat_export/instances_default.json `
+  --image-root data/training/view_detection/images `
+  --checkpoint data/training/view_detection/view_detector.pt `
+  --output-dir data/training/view_detection/view-evaluation
+```
+
+In Colab, use the same command with `/content/...` paths. The evaluator
+recreates the deterministic fallback split when `manifest.json` is not
+available in the upload.
+
 ## Automatic pre-annotations
 
 To generate proposals from the analyzer instead of drawing every box from
