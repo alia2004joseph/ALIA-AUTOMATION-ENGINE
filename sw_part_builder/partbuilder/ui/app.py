@@ -309,6 +309,17 @@ class App(ctk.CTk):
                     run_ocr=True,
                 )
                 interpretation = interpret_drawing(report)
+                from ..core.raster_training_export import export_raster_training_images
+
+                training_exports = export_raster_training_images(
+                    report,
+                    pdf_path,
+                    Path(__file__).resolve().parents[2]
+                    / "data"
+                    / "training"
+                    / "view_detection",
+                )
+                report["raster_training_exports"] = training_exports
                 report_path.write_text(
                     json.dumps(report, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8",
@@ -350,6 +361,7 @@ class App(ctk.CTk):
             f"{interpretation['summary']['dimension_candidate_count']} dimension candidate(s), "
             f"{interpretation['summary']['symbol_annotation_count']} symbol annotation(s). "
             f"Offline OCR: {report.get('offline_ocr', {}).get('status', 'not reported')}. "
+            f"{len(report.get('raster_training_exports', []))} training image(s) archived. "
             f"Reports and PNG files saved to {output_dir}."
         )
         self._show_pdf_analysis(pdf_path, output_dir, report, interpretation)

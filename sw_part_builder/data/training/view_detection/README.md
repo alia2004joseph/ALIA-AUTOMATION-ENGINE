@@ -104,6 +104,22 @@ In Colab, use the same command with `/content/...` paths. The evaluator
 recreates the deterministic fallback split when `manifest.json` is not
 available in the upload.
 
+## Images saved from the GUI analyzer
+
+When **Analyze Drawing...** is used in the GUI, the analyzer keeps its normal
+per-drawing output and also archives images for future training:
+
+```text
+images/raster-analyzer/                    clean model-input PNGs
+images/raster-analyzer-overlays/           boxes and labels for human review
+images/raster-analyzer-orthographic-crops/ orthographic crop previews
+raster-analyzer-manifest.json              source/page metadata and proposals
+```
+
+Use only the clean images for model input. Overlay and crop files are for
+review and should not be used as model inputs. The archive is local and
+ignored by Git alongside the other generated training data.
+
 ## Automatic pre-annotations
 
 To generate proposals from the analyzer instead of drawing every box from

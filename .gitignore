@@ -6,6 +6,10 @@ venv/
 sw_part_builder/data/raw/
 sw_part_builder/data/training/view_detection/images/raw/
 sw_part_builder/data/training/view_detection/images/text-masked/
+sw_part_builder/data/training/view_detection/images/raster-analyzer/
+sw_part_builder/data/training/view_detection/images/raster-analyzer-overlays/
+sw_part_builder/data/training/view_detection/images/raster-analyzer-orthographic-crops/
 sw_part_builder/data/training/view_detection/ocr/
 sw_part_builder/data/training/view_detection/manifest.json
+sw_part_builder/data/training/view_detection/raster-analyzer-manifest.json
 sw_part_builder/data/training/view_detection/preannotations*.json
