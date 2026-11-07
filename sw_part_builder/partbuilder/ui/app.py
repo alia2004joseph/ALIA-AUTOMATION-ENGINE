@@ -539,6 +539,24 @@ class App(ctk.CTk):
         image_frame.grid_rowconfigure(0, weight=1)
         image_label = ctk.CTkLabel(image_frame, text="Loading PNG preview...")
         image_label.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        source_preview = [None]
+
+        def resize_preview(_event=None):
+            source = source_preview[0]
+            if source is None:
+                return
+            available_width = max(100, image_frame.winfo_width() - 20)
+            available_height = max(100, image_frame.winfo_height() - 20)
+            preview = source.copy()
+            preview.thumbnail((available_width, available_height))
+            window.preview_image = ctk.CTkImage(
+                light_image=preview,
+                dark_image=preview,
+                size=preview.size,
+            )
+            image_label.configure(image=window.preview_image, text="")
+
+        image_frame.bind("<Configure>", resize_preview)
         output_label = ctk.CTkLabel(
             window,
             text="",
@@ -624,15 +642,11 @@ class App(ctk.CTk):
                 from PIL import Image
 
                 with Image.open(image_path) as source:
-                    preview = source.copy()
-                preview.thumbnail((1060, 690))
-                window.preview_image = ctk.CTkImage(
-                    light_image=preview,
-                    dark_image=preview,
-                    size=preview.size,
-                )
-                image_label.configure(image=window.preview_image, text="")
+                    source_preview[0] = source.convert("RGB")
+                resize_preview()
+                window.after_idle(resize_preview)
             else:
+                source_preview[0] = None
                 window.preview_image = None
                 image_label.configure(
                     image=None,
