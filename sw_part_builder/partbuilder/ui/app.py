@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -288,12 +289,12 @@ class App(ctk.CTk):
             return
 
         pdf_path = Path(file_path)
-        output_dir = pdf_path.with_name(f"{pdf_path.stem}-drawing-analysis")
+        output_dir = Path(tempfile.mkdtemp(prefix="part-builder-drawing-analysis-"))
         report_path = output_dir / "report.json"
         interpretation_path = output_dir / "drawing-interpretation.json"
         self.btn_pdf_analysis.configure(state="disabled")
         self.safe_log_to_sw_panel(
-            f"[DRAWING ANALYSIS] Processing {pdf_path.name}; results will be saved to {output_dir}."
+            f"[DRAWING ANALYSIS] Processing {pdf_path.name}; model output will be archived centrally."
         )
 
         def worker():
@@ -309,17 +310,6 @@ class App(ctk.CTk):
                     run_ocr=True,
                 )
                 interpretation = interpret_drawing(report)
-                from ..core.raster_training_export import export_raster_training_images
-
-                training_exports = export_raster_training_images(
-                    report,
-                    pdf_path,
-                    Path(__file__).resolve().parents[2]
-                    / "data"
-                    / "training"
-                    / "view_detection",
-                )
-                report["raster_training_exports"] = training_exports
                 checkpoint = (
                     Path(__file__).resolve().parents[2]
                     / "data"
@@ -334,7 +324,13 @@ class App(ctk.CTk):
                     report["view_detector_evaluation"] = evaluate_report(
                         report,
                         checkpoint,
-                        output_dir / "view-detector",
+                        Path(__file__).resolve().parents[2]
+                        / "data"
+                        / "training"
+                        / "view_detection"
+                        / "images"
+                        / "model-predictions",
+                        output_prefix=pdf_path.stem,
                     )
                 else:
                     report["view_detector_evaluation"] = {
@@ -375,6 +371,7 @@ class App(ctk.CTk):
     def _pdf_analysis_finished(self, pdf_path, output_dir, report, interpretation, error):
         self.btn_pdf_analysis.configure(state="normal")
         if error is not None:
+            shutil.rmtree(output_dir, ignore_errors=True)
             self.safe_log_to_sw_panel(f"[DRAWING ANALYSIS] Failed: {error}")
             messagebox.showerror("Drawing analysis failed", str(error))
             return
@@ -384,15 +381,19 @@ class App(ctk.CTk):
             f"{interpretation['summary']['dimension_candidate_count']} dimension candidate(s), "
             f"{interpretation['summary']['symbol_annotation_count']} symbol annotation(s). "
             f"Offline OCR: {report.get('offline_ocr', {}).get('status', 'not reported')}. "
-            f"{len(report.get('raster_training_exports', []))} training image(s) archived. "
             f"{report.get('view_detector_evaluation', {}).get('prediction_count', 0)} "
-            f"model prediction(s). "
-            f"Reports and PNG files saved to {output_dir}."
+            f"model prediction(s) archived centrally. "
+            f"Temporary analysis files will be removed when the preview closes."
         )
         self._show_pdf_analysis(pdf_path, output_dir, report, interpretation)
 
     def _show_pdf_analysis(self, pdf_path, output_dir, report, interpretation):
         window = ctk.CTkToplevel(self)
+        def close_analysis_window():
+            window.destroy()
+            shutil.rmtree(output_dir, ignore_errors=True)
+
+        window.protocol("WM_DELETE_WINDOW", close_analysis_window)
         window.title(f"Drawing analysis: {pdf_path.name}")
         window.geometry("1120x820")
         window.minsize(720, 560)

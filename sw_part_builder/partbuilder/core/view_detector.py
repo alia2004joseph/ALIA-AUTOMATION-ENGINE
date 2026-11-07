@@ -1,7 +1,7 @@
 """Load and run the trained view detector on analyzer images."""
 from __future__ import annotations
 
-import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,10 +9,14 @@ from typing import Any
 CLASS_NAMES = ("__background__", "orthographic", "section", "detail", "isometric")
 
 
+def _safe_stem(value: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
+    return stem or "drawing"
+
+
 def _build_model(num_classes: int):
     import torch
     from torchvision.models.detection import (
-        FasterRCNN_ResNet50_FPN_Weights,
         fasterrcnn_resnet50_fpn,
     )
     from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -98,6 +102,7 @@ def evaluate_report(
     output_dir: str | Path,
     *,
     score_threshold: float = 0.50,
+    output_prefix: str = "drawing",
 ) -> dict[str, Any]:
     """Evaluate every clean raster page in an analyzer report."""
     output_dir = Path(output_dir)
@@ -112,7 +117,8 @@ def evaluate_report(
         result = evaluate_image(
             image_path,
             checkpoint_path,
-            output_dir / f"page-{int(page['page_number']):03d}-view-detector.png",
+            output_dir
+            / f"{_safe_stem(output_prefix)}-page-{int(page['page_number']):03d}-view-detector.png",
             score_threshold=score_threshold,
         )
         pages.append(
@@ -132,7 +138,4 @@ def evaluate_report(
         "pages": pages,
         "prediction_count": sum(page["prediction_count"] for page in pages),
     }
-    (output_dir / "view-detector-evaluation.json").write_text(
-        json.dumps(result, indent=2) + "\n", encoding="utf-8"
-    )
     return result

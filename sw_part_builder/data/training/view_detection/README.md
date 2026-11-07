@@ -106,19 +106,16 @@ available in the upload.
 
 ## Images saved from the GUI analyzer
 
-When **Analyze Drawing...** is used in the GUI, the analyzer keeps its normal
-per-drawing output and also archives images for future training:
+When **Analyze Drawing...** is used in the GUI, temporary analysis files are
+created outside the drawing's directory. Only model prediction images are
+archived centrally:
 
 ```text
-images/raster-analyzer/                    clean model-input PNGs
-images/raster-analyzer-overlays/           boxes and labels for human review
-images/raster-analyzer-orthographic-crops/ orthographic crop previews
-raster-analyzer-manifest.json              source/page metadata and proposals
+images/model-predictions/                  model-labeled PNGs
 ```
 
-Use only the clean images for model input. Overlay and crop files are for
-review and should not be used as model inputs. The archive is local and
-ignored by Git alongside the other generated training data.
+The prediction archive is local and ignored by Git alongside the other
+generated training data.
 
 ## Evaluate the model from the GUI
 
@@ -129,8 +126,8 @@ data/training/view_detection/models/view_detector.pt
 ```
 
 The next GUI analysis automatically runs the detector on each clean raster
-page. It saves prediction data in the drawing's `view-detector/` folder and
-adds a **Model predictions** preview mode with red labeled boxes. If the
+page. It saves labeled images in `images/model-predictions/` and adds a
+**Model predictions** preview mode with red labeled boxes. If the
 checkpoint is absent, drawing analysis still works normally and only model
 evaluation is skipped.
 
